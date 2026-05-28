@@ -70,14 +70,14 @@ export class WebGateway {
 
     // Initialize Telegram bot
     logger.info('Initializing Telegram bot');
-    initBot();
+    const bot = initBot();
 
     // Start server
     await this.startServer();
 
     // Start Telegram bot
     logger.info('Starting Telegram bot');
-    await startBot();
+    await startBot(bot);
 
     logger.info('✅ Web Gateway ready');
   }

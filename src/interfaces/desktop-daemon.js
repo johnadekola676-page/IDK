@@ -62,7 +62,7 @@ export class DesktopDaemon {
 
     // Initialize Telegram bot with desktop context
     logger.info('Initializing Telegram bot (Desktop Mode)');
-    initBot();
+    const bot = initBot();
 
     // Set up agent executor for desktop mode
     this.setupAgentExecutor();
@@ -72,7 +72,7 @@ export class DesktopDaemon {
 
     // Start Telegram bot
     logger.info('Starting Telegram bot');
-    await startBot();
+    await startBot(bot);
 
     logger.info('✅ Desktop Daemon ready', {
       monitoring: this.projectPath,
