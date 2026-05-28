@@ -1,7 +1,7 @@
 import { Octokit } from '@octokit/rest';
 import logger from '../utils/logger.js';
 
-const octokit = new Octokit({
+export const octokit = new Octokit({
   auth: process.env.GITHUB_TOKEN,
   userAgent: 'Autonomous-CI-CD-Agent/1.0.0',
   baseUrl: 'https://api.github.com',
@@ -10,8 +10,8 @@ const octokit = new Octokit({
   }
 });
 
-const REPO_OWNER = process.env.GITHUB_REPO_OWNER;
-const REPO_NAME = process.env.GITHUB_REPO_NAME;
+export const REPO_OWNER = process.env.GITHUB_REPO_OWNER;
+export const REPO_NAME = process.env.GITHUB_REPO_NAME;
 
 /**
  * Get repository information

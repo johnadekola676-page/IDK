@@ -25,10 +25,11 @@
     "groq-sdk": "^0.7.0",
     "@octokit/rest": "^20.1.1",
     "better-sqlite3": "^11.7.0",
-    "fs-safe": "^2.1.0",
+    "fs-safe": "^1.2.0",
     "simple-git": "^3.27.0",
     "winston": "^3.15.0",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "playwright": "^1.48.2"
   },
   "devDependencies": {
     "node": ">=22.0.0"

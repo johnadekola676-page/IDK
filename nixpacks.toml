@@ -2,10 +2,13 @@
 nixPkgs = ["nodejs_22", "git"]
 
 [phases.install]
-cmds = ["npm ci"]
+cmds = ["npm install"]
 
 [phases.build]
-cmds = ["npm run init-db"]
+cmds = [
+  "npm run init-db",
+  "npx playwright install --with-deps chromium"
+]
 
 [start]
 cmd = "npm start"
