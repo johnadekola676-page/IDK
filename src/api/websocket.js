@@ -2,7 +2,7 @@
  * WebSocket server for real-time agent progress updates
  */
 
-import logger from '../logger.js';
+import logger from '../utils/logger.js';
 
 /**
  * Initialize WebSocket server with Socket.io

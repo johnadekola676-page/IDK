@@ -21,6 +21,8 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "@google/generative-ai": "^0.21.0",
     "@octokit/rest": "^20.1.1",
     "better-sqlite3": "^11.7.0",
     "cors": "^2.8.6",
