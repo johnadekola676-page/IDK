@@ -108,7 +108,7 @@ export class WebGateway {
     this.app.use(express.static(frontendDistPath));
 
     // SPA fallback
-    this.app.get('*', (req, res) => {
+    this.app.get(/.*/, (req, res) => {
       res.sendFile(path.join(frontendDistPath, 'index.html'));
     });
 
