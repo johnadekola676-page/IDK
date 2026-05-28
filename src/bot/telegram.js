@@ -49,11 +49,23 @@ export function initBot() {
 }
 
 /**
- * Start bot
+ * Start bot with non-blocking error handling
  * @param {Telegraf} bot - Bot instance
+ * @param {Object} options - Optional configuration
+ * @param {Function} options.onFailure - Callback for handling failures
+ * @param {number} options.retryDelay - Delay in milliseconds before attempting launch
+ * @returns {Promise<{success: boolean, error?: Error, code?: number, retryable?: boolean}>}
  */
-export async function startBot(bot) {
+export async function startBot(bot, options = {}) {
+  const { onFailure, retryDelay = 0 } = options;
+
   try {
+    // Wait for retry delay if specified
+    if (retryDelay > 0) {
+      logger.info('Waiting before bot launch attempt', { retryDelay });
+      await new Promise(resolve => setTimeout(resolve, retryDelay));
+    }
+
     logger.info('Starting Telegram bot');
 
     // Enable graceful stop
@@ -64,9 +76,43 @@ export async function startBot(bot) {
     await bot.launch();
 
     logger.info('Telegram bot started successfully');
+    return { success: true };
   } catch (error) {
-    logger.error('Failed to start bot', { error: error.message });
-    throw error;
+    // Check for 409 Conflict error (another instance running)
+    const errorCode = error.response?.error_code;
+    const is409Conflict = errorCode === 409;
+    const retryable = is409Conflict || errorCode === 429 || errorCode >= 500;
+
+    // Log as warning (non-fatal) instead of error
+    logger.warn('Failed to start bot', {
+      error: error.message,
+      code: errorCode,
+      retryable,
+      description: error.response?.description
+    });
+
+    // Output structured diagnostic data
+    console.error(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      event: 'bot_start_failure',
+      error: error.message,
+      code: errorCode,
+      retryable,
+      stack: error.stack
+    }, null, 2));
+
+    // Call failure callback if provided
+    if (onFailure) {
+      onFailure(error);
+    }
+
+    // Return failure result instead of throwing
+    return {
+      success: false,
+      error,
+      code: errorCode,
+      retryable
+    };
   }
 }
 

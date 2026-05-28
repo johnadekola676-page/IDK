@@ -31,6 +31,10 @@ export class WebGateway {
     this.app = null;
     this.server = null;
     this.io = null;
+    this.bot = null;
+    this.botConnected = false;
+    this.botRetryCount = 0;
+    this.botRetryTimer = null;
   }
 
   /**
@@ -70,16 +74,16 @@ export class WebGateway {
 
     // Initialize Telegram bot
     logger.info('Initializing Telegram bot');
-    const bot = initBot();
+    this.bot = initBot();
 
-    // Start server
+    // Start server FIRST (non-blocking)
     await this.startServer();
 
-    // Start Telegram bot
-    logger.info('Starting Telegram bot');
-    await startBot(bot);
+    // Attempt bot start in background (non-blocking)
+    logger.info('Attempting Telegram bot connection in background');
+    this.attemptBotStart();
 
-    logger.info('✅ Web Gateway ready');
+    logger.info('✅ Web Gateway ready (Telegram bot connecting in background)');
   }
 
   /**
@@ -157,6 +161,76 @@ export class WebGateway {
   }
 
   /**
+   * Attempt to start Telegram bot with exponential backoff retry logic
+   * Non-blocking operation - failures will be retried in the background
+   */
+  async attemptBotStart() {
+    // Calculate retry delay using exponential backoff
+    let retryDelay = 0;
+    if (this.botRetryCount > 0) {
+      // First 5 attempts: exponential backoff (5s, 15s, 45s, 135s, 405s)
+      // After 5 attempts: switch to 5 minute intervals
+      if (this.botRetryCount <= 5) {
+        retryDelay = 5000 * Math.pow(3, this.botRetryCount - 1);
+      } else {
+        retryDelay = 5 * 60 * 1000; // 5 minutes
+      }
+    }
+
+    // Attempt to start the bot
+    const result = await startBot(this.bot, {
+      retryDelay,
+      onFailure: (error) => {
+        logger.warn('Bot start failure callback triggered', {
+          attempt: this.botRetryCount + 1,
+          error: error.message
+        });
+      }
+    });
+
+    if (result.success) {
+      // Success - bot is connected
+      this.botConnected = true;
+      global.botStatus = 'connected';
+      const attemptNumber = this.botRetryCount + 1;
+      this.botRetryCount = 0;
+
+      logger.info('✅ Telegram bot connected successfully', {
+        afterAttempts: attemptNumber
+      });
+    } else {
+      // Failure - schedule retry if retryable
+      this.botConnected = false;
+      global.botStatus = 'disconnected';
+      this.botRetryCount++;
+
+      if (result.retryable) {
+        const nextRetryDelay = this.botRetryCount <= 5
+          ? 5000 * Math.pow(3, this.botRetryCount - 1)
+          : 5 * 60 * 1000;
+
+        logger.info('Scheduling bot reconnection attempt', {
+          attempt: this.botRetryCount,
+          nextRetryIn: `${Math.round(nextRetryDelay / 1000)}s`,
+          errorCode: result.code,
+          maxAttemptsReached: this.botRetryCount > 5
+        });
+
+        // Schedule next retry
+        this.botRetryTimer = setTimeout(() => {
+          this.attemptBotStart();
+        }, nextRetryDelay);
+      } else {
+        logger.error('Bot start failed with non-retryable error', {
+          error: result.error.message,
+          code: result.code
+        });
+        global.botStatus = 'failed';
+      }
+    }
+  }
+
+  /**
    * Log fatal error with formatting
    */
   logFatalError(errors) {
@@ -177,6 +251,26 @@ export class WebGateway {
    */
   async shutdown() {
     logger.info('Shutting down Web Gateway');
+
+    // Clear bot retry timer if active
+    if (this.botRetryTimer) {
+      clearTimeout(this.botRetryTimer);
+      this.botRetryTimer = null;
+      logger.info('Cleared bot retry timer');
+    }
+
+    // Stop bot if connected
+    if (this.bot && this.botConnected) {
+      try {
+        logger.info('Stopping Telegram bot');
+        await this.bot.stop();
+        logger.info('Telegram bot stopped');
+      } catch (error) {
+        logger.warn('Error stopping bot during shutdown', {
+          error: error.message
+        });
+      }
+    }
 
     if (this.server) {
       await new Promise((resolve) => {

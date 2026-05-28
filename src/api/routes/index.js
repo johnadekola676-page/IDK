@@ -16,7 +16,8 @@ router.get('/health', (req, res) => {
     success: true,
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    telegram: global.botStatus || 'unknown'
   });
 });
 
