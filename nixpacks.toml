@@ -5,10 +5,7 @@ nixPkgs = ["nodejs_22", "git", "python3", "gcc", "gnumake"]
 cmds = ["npm install"]
 
 [phases.build]
-cmds = [
-  "npm run init-db",
-  "npx playwright install --with-deps chromium"
-]
+cmds = ["npm run init-db"]
 
 [start]
 cmd = "npm start"
