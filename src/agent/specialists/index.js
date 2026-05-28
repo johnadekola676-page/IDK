@@ -15,9 +15,9 @@ export { QASpecialist } from './qa-specialist.js';
 /**
  * Create and initialize a registry with all specialists
  *
- * @returns {SpecialistRegistry} Initialized registry
+ * @returns {Promise<SpecialistRegistry>} Initialized registry
  */
-export function createSpecialistRegistry() {
+export async function createSpecialistRegistry() {
   const { SpecialistRegistry } = await import('./registry.js');
   const { GitSpecialist } = await import('./git-specialist.js');
   const { CodingSpecialist } = await import('./coding-specialist.js');
