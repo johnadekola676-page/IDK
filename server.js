@@ -24,6 +24,18 @@ async function initialize() {
   const envValidation = validateEnvironment();
 
   if (!envValidation.valid) {
+    // Log detailed error before throwing
+    console.error('\n');
+    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.error('[FATAL] APPLICATION STARTUP FAILED');
+    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.error('Missing required environment variables:');
+    envValidation.errors.forEach((err, idx) => {
+      console.error(`  ${idx + 1}. ${err}`);
+    });
+    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.error('\n');
+
     logger.error('Environment validation failed', { errors: envValidation.errors });
     throw new Error(`Environment validation failed: ${envValidation.errors.join(', ')}`);
   }
@@ -79,7 +91,7 @@ function createHealthServer() {
     }
   });
 
-  server.listen(PORT, () => {
+  server.listen(PORT, '0.0.0.0', () => {
     logger.info(`Health check server listening on port ${PORT}`);
   });
 

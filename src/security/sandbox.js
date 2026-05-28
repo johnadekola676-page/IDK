@@ -181,7 +181,8 @@ export function validateEnvironment() {
   try {
     const fs = require('fs');
     if (!fs.existsSync(SANDBOX_WORKSPACE)) {
-      errors.push(`Sandbox workspace does not exist: ${SANDBOX_WORKSPACE}`);
+      // This is a warning, not a fatal error - workspace will be created
+      logger.warn(`Sandbox workspace does not exist yet: ${SANDBOX_WORKSPACE} (will be created)`);
     }
   } catch (error) {
     errors.push(`Failed to check sandbox workspace: ${error.message}`);
