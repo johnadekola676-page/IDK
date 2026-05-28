@@ -1,12 +1,18 @@
-import fsRoot from 'fs-safe';
+import * as fsSafe from 'fs-safe';
 import { promises as fs } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, resolve } from 'path';
 import logger from './logger.js';
 
-const SANDBOX_WORKSPACE = process.env.SANDBOX_WORKSPACE || './sandbox-workspace';
+const SANDBOX_WORKSPACE = resolve(process.env.SANDBOX_WORKSPACE || './sandbox-workspace');
 
-// Initialize fs-safe with sandbox root
-const safeFs = fsRoot.root(SANDBOX_WORKSPACE);
+/**
+ * Get full path within sandbox
+ * @param {string} relativePath - Relative path
+ * @returns {string} Full path
+ */
+function getSandboxPath(relativePath) {
+  return join(SANDBOX_WORKSPACE, relativePath);
+}
 
 /**
  * Ensure sandbox workspace exists
@@ -28,7 +34,8 @@ export async function ensureSandbox() {
  */
 export async function readFileSafe(filePath) {
   try {
-    const content = await safeFs.readFile(filePath, 'utf-8');
+    const fullPath = getSandboxPath(filePath);
+    const content = await fsSafe.readFile(fullPath, { encoding: 'utf-8' });
     logger.debug('Read file', { filePath });
     return content;
   } catch (error) {
@@ -44,13 +51,12 @@ export async function readFileSafe(filePath) {
  */
 export async function writeFileSafe(filePath, content) {
   try {
+    const fullPath = getSandboxPath(filePath);
     // Ensure directory exists
-    const dir = dirname(filePath);
-    if (dir && dir !== '.') {
-      await safeFs.mkdir(dir, { recursive: true });
-    }
+    const dir = dirname(fullPath);
+    await fsSafe.writeDir(dir);
 
-    await safeFs.writeFile(filePath, content, 'utf-8');
+    await fsSafe.writeFile(fullPath, content, { encoding: 'utf-8' });
     logger.info('Wrote file', { filePath, size: content.length });
   } catch (error) {
     logger.error('Failed to write file', { filePath, error: error.message });
@@ -65,8 +71,8 @@ export async function writeFileSafe(filePath, content) {
  */
 export async function existsSafe(filePath) {
   try {
-    await safeFs.access(filePath);
-    return true;
+    const fullPath = getSandboxPath(filePath);
+    return await fsSafe.fileExists(fullPath);
   } catch {
     return false;
   }
@@ -78,7 +84,8 @@ export async function existsSafe(filePath) {
  */
 export async function deleteFileSafe(filePath) {
   try {
-    await safeFs.unlink(filePath);
+    const fullPath = getSandboxPath(filePath);
+    await fsSafe.removeFile(fullPath);
     logger.info('Deleted file', { filePath });
   } catch (error) {
     logger.error('Failed to delete file', { filePath, error: error.message });
@@ -93,7 +100,8 @@ export async function deleteFileSafe(filePath) {
  */
 export async function listFilesSafe(dirPath = '.') {
   try {
-    const files = await safeFs.readdir(dirPath);
+    const fullPath = getSandboxPath(dirPath);
+    const files = await fsSafe.readDir(fullPath);
     logger.debug('Listed files', { dirPath, count: files.length });
     return files;
   } catch (error) {
@@ -108,7 +116,8 @@ export async function listFilesSafe(dirPath = '.') {
  */
 export async function mkdirSafe(dirPath) {
   try {
-    await safeFs.mkdir(dirPath, { recursive: true });
+    const fullPath = getSandboxPath(dirPath);
+    await fsSafe.writeDir(fullPath);
     logger.info('Created directory', { dirPath });
   } catch (error) {
     logger.error('Failed to create directory', { dirPath, error: error.message });
@@ -123,7 +132,8 @@ export async function mkdirSafe(dirPath) {
  */
 export async function getStatsSafe(filePath) {
   try {
-    const stats = await safeFs.stat(filePath);
+    const fullPath = getSandboxPath(filePath);
+    const stats = await fs.stat(fullPath);
     return {
       size: stats.size,
       isDirectory: stats.isDirectory(),
@@ -144,12 +154,12 @@ export async function getStatsSafe(filePath) {
  */
 export async function copyFileSafe(srcPath, destPath) {
   try {
-    const content = await safeFs.readFile(srcPath);
-    const destDir = dirname(destPath);
-    if (destDir && destDir !== '.') {
-      await safeFs.mkdir(destDir, { recursive: true });
-    }
-    await safeFs.writeFile(destPath, content);
+    const fullSrcPath = getSandboxPath(srcPath);
+    const fullDestPath = getSandboxPath(destPath);
+    const content = await fsSafe.readFile(fullSrcPath);
+    const destDir = dirname(fullDestPath);
+    await fsSafe.writeDir(destDir);
+    await fsSafe.writeFile(fullDestPath, content);
     logger.info('Copied file', { srcPath, destPath });
   } catch (error) {
     logger.error('Failed to copy file', { srcPath, destPath, error: error.message });
@@ -170,18 +180,19 @@ export async function readDirectoryTree(dirPath = '.', maxDepth = 5) {
     if (depth > maxDepth) return;
 
     try {
-      const entries = await safeFs.readdir(currentPath, { withFileTypes: true });
+      const fullPath = getSandboxPath(currentPath);
+      const entries = await fs.readdir(fullPath, { withFileTypes: true });
 
       for (const entry of entries) {
-        const fullPath = join(currentPath, entry.name);
+        const relativePath = join(currentPath, entry.name);
 
         if (entry.isDirectory()) {
           // Skip node_modules and hidden directories
           if (entry.name !== 'node_modules' && !entry.name.startsWith('.')) {
-            await traverse(fullPath, depth + 1);
+            await traverse(relativePath, depth + 1);
           }
         } else if (entry.isFile()) {
-          files.push(fullPath);
+          files.push(relativePath);
         }
       }
     } catch (error) {
