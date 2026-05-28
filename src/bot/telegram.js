@@ -21,7 +21,12 @@ export function initBot() {
     throw new Error('TELEGRAM_BOT_TOKEN environment variable is required');
   }
 
-  logger.info('Initializing Telegram bot');
+  // Telemetry logging for token verification
+  console.log('Token check:', token?.substring(0, 5) + '...', 'Length:', token?.length);
+  logger.info('Initializing Telegram bot', {
+    tokenPrefix: token?.substring(0, 5),
+    tokenLength: token?.length
+  });
 
   const bot = new Telegraf(token);
 
