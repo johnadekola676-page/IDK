@@ -3,9 +3,11 @@
  */
 
 import { Router } from 'express';
-import db from '../../db/index.js';
-import logger from '../../logger.js';
+import { getDatabase } from '../../database/db.js';
+import logger from '../../utils/logger.js';
 import { authenticate } from '../middleware/auth.js';
+
+const db = getDatabase();
 
 const router = Router();
 
