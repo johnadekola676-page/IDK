@@ -1,6 +1,6 @@
 import { SOPWorksheet } from './worksheet.js';
 import { getWorkflow } from './workflows/index.js';
-import { logger } from '../../utils/logger.js';
+import logger from '../../utils/logger.js';
 import { logAuditEvent } from '../../database/queries.js';
 
 /**

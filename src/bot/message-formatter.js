@@ -1,5 +1,5 @@
 import { toTelegram } from '../ui/parsers/jsx-parser.js';
-import { logger } from '../utils/logger.js';
+import logger from '../utils/logger.js';
 
 /**
  * Message Formatter for Telegram

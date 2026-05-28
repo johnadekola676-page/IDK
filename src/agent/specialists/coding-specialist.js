@@ -1,6 +1,6 @@
 import { SpecialistAgent } from './base.js';
 import { executeExecutePhase } from '../phases/execute.js';
-import { logger } from '../../utils/logger.js';
+import logger from '../../utils/logger.js';
 import fs from 'fs';
 
 /**

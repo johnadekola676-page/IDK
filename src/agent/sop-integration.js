@@ -18,7 +18,7 @@
 
 import { SOPExecutor } from './sop/executor.js';
 import { createSpecialistRegistry } from './specialists/index.js';
-import { logger } from '../utils/logger.js';
+import logger from '../utils/logger.js';
 import { logAuditEvent } from '../database/queries.js';
 import TokenBudgetManager from '../groq/token-budget.js';
 

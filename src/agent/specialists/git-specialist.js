@@ -1,7 +1,7 @@
 import { SpecialistAgent } from './base.js';
 import { Octokit } from '@octokit/rest';
 import { execSync } from 'child_process';
-import { logger } from '../../utils/logger.js';
+import logger from '../../utils/logger.js';
 
 /**
  * Git Specialist

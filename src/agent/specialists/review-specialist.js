@@ -1,7 +1,7 @@
 import { SpecialistAgent } from './base.js';
 import { executeDeployPhase } from '../phases/deploy.js';
 import { readFileSafe } from '../../utils/filesystem.js';
-import { logger } from '../../utils/logger.js';
+import logger from '../../utils/logger.js';
 import fs from 'fs';
 import path from 'path';
 

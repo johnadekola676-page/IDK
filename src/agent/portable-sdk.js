@@ -30,7 +30,7 @@ import {
   logAuditEvent,
   getAuditHistory
 } from '../database/queries.js';
-import { logger } from '../utils/logger.js';
+import logger from '../utils/logger.js';
 import fs from 'fs';
 import path from 'path';
 

@@ -1,7 +1,7 @@
 import { SpecialistAgent } from './base.js';
 import { executeTestPhase } from '../phases/test.js';
 import { execSync } from 'child_process';
-import { logger } from '../../utils/logger.js';
+import logger from '../../utils/logger.js';
 import fs from 'fs';
 import path from 'path';
 

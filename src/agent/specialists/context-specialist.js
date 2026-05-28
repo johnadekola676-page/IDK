@@ -2,7 +2,7 @@ import { SpecialistAgent } from './base.js';
 import { executePlanPhase } from '../phases/plan.js';
 import { getRecentMessages } from '../../database/queries.js';
 import { readFileSafe } from '../../utils/filesystem.js';
-import { logger } from '../../utils/logger.js';
+import logger from '../../utils/logger.js';
 import fs from 'fs';
 import path from 'path';
 
