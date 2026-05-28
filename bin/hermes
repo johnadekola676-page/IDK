@@ -1,0 +1,8 @@
+#!/usr/bin/env node
+
+/**
+ * Hermes CLI Executable
+ * Wrapper script for CLI mode
+ */
+
+import '../server.js';
