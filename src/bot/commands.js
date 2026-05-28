@@ -13,7 +13,7 @@ import { isSOPEnabled } from '../agent/sop-integration.js';
  */
 export async function handleStart(ctx) {
   const welcomeMessage = `
-🤖 **Autonomous CI/CD Developer Agent**
+🤖 *Autonomous CI/CD Developer Agent*
 
 Welcome! I'm your autonomous development assistant. I can:
 
@@ -22,15 +22,15 @@ Welcome! I'm your autonomous development assistant. I can:
 • Monitor GitHub Actions workflows
 • Automatically fix errors and retry
 
-**Commands:**
+*Commands:*
 /start - Show this message
 /task <description> - Execute a development task
 /review_pr <number> - Review a pull request
 /status - Check workflow status
 /help - Detailed help
 
-**Example:**
-\`/task Create a REST API endpoint for user authentication\`
+*Example:*
+/task Create a REST API endpoint for user authentication
 
 Let's build something amazing! 🚀
 `;
@@ -43,11 +43,11 @@ Let's build something amazing! 🚀
  */
 export async function handleHelp(ctx) {
   const helpMessage = `
-📚 **Detailed Help**
+📚 *Detailed Help*
 
-**Available Commands:**
+*Available Commands:*
 
-**/task <description>**
+*/task <description>*
 Execute an autonomous development task using the 5-phase loop:
 1. Plan - Analyze & create implementation plan
 2. Execute - Generate & write code
@@ -61,7 +61,7 @@ Features:
 - Automatic error fixing
 - Progress updates
 
-**/review_pr <number>**
+*/review_pr <number>*
 Review a pull request for:
 - Security vulnerabilities
 - Hardcoded credentials
@@ -69,10 +69,10 @@ Review a pull request for:
 - Code quality issues
 - Compliance with claude.md guidelines
 
-**/status**
+*/status*
 Check current GitHub Actions workflow status
 
-**Safety Features:**
+*Safety Features:*
 ✓ Command blocklist (blocks dangerous operations)
 ✓ Sandboxed execution
 ✓ User authentication

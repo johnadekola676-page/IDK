@@ -27,6 +27,8 @@ const __dirname = path.dirname(__filename);
 
 export class WebGateway {
   constructor() {
+    // Railway ALWAYS provides PORT env var in production
+    // 3000 fallback is ONLY for local development
     this.port = Number(process.env.PORT) || 3000;
     this.app = null;
     this.server = null;
@@ -45,6 +47,11 @@ export class WebGateway {
       port: this.port,
       nodeEnv: process.env.NODE_ENV
     });
+
+    // Warn if running in production without PORT env var
+    if (process.env.NODE_ENV === 'production' && !process.env.PORT) {
+      logger.warn('⚠️ Running in production without PORT environment variable set. Using fallback port 3000.');
+    }
 
     // Validate environment
     const envValidation = validateEnvironment();
