@@ -37,7 +37,17 @@ export async function executeExecutePhase(plan, task, context = {}) {
             ? `Modify the following file according to the task.\n\nTask: ${step.description}\n\nExisting code:\n\`\`\`\n${existingCode}\n\`\`\`\n\nProvide the complete modified file.`
             : `Create a new file for the following task.\n\nTask: ${step.description}\n\nFile: ${step.file}\n\nProvide the complete file content.`;
 
-          code = await generateCode(prompt, context.messages || []);
+          // Check token budget before expensive AI call
+          if (context.budgetManager) {
+            const estimatedInputTokens = Math.ceil((prompt.length + JSON.stringify(context.messages || []).length) / 4);
+            const budgetCheck = context.budgetManager.checkBudget(estimatedInputTokens, 2000);
+            if (!budgetCheck.allowed) {
+              logger.warn('Insufficient token budget in execute phase', budgetCheck);
+              throw new Error(`Token budget exceeded: ${budgetCheck.reason}`);
+            }
+          }
+
+          code = await generateCode(prompt, context.messages || [], context.budgetManager);
 
           // Extract code from markdown if present
           const codeMatch = code.match(/```(?:javascript|js|typescript|ts|jsx|tsx)?\n?([\s\S]*?)```/);

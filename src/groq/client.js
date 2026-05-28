@@ -21,13 +21,14 @@ export async function generateCompletion(messages, options = {}) {
       temperature = 0.7,
       maxTokens = 8000,
       stream = false,
-      onChunk = null
+      onChunk = null,
+      budgetManager = null // V2 Enhancement: Token budget tracking
     } = options;
 
     logger.info('Generating completion', { model, messageCount: messages.length });
 
     if (stream && onChunk) {
-      return await streamCompletion(messages, { model, temperature, maxTokens, onChunk });
+      return await streamCompletion(messages, { model, temperature, maxTokens, onChunk, budgetManager });
     }
 
     const completion = await groq.chat.completions.create({
@@ -49,6 +50,11 @@ export async function generateCompletion(messages, options = {}) {
 
     logger.logGroqAPI(model, response.usage.totalTokens);
 
+    // V2 Enhancement: Track token usage in budget manager
+    if (budgetManager) {
+      budgetManager.addUsage(response.usage.promptTokens, response.usage.completionTokens);
+    }
+
     return response;
   } catch (error) {
     logger.error('Failed to generate completion', { error: error.message });
@@ -63,7 +69,7 @@ export async function generateCompletion(messages, options = {}) {
  * @returns {Promise<Object>} Completion result
  */
 async function streamCompletion(messages, options) {
-  const { model, temperature, maxTokens, onChunk } = options;
+  const { model, temperature, maxTokens, onChunk, budgetManager } = options;
 
   try {
     const stream = await groq.chat.completions.create({
@@ -98,6 +104,11 @@ async function streamCompletion(messages, options) {
 
     logger.logGroqAPI(model, usage.totalTokens);
 
+    // V2 Enhancement: Track token usage in budget manager
+    if (budgetManager) {
+      budgetManager.addUsage(usage.promptTokens, usage.completionTokens);
+    }
+
     return {
       content: fullContent,
       finishReason: 'stop',
@@ -113,9 +124,10 @@ async function streamCompletion(messages, options) {
  * Generate code with optimized settings
  * @param {string} prompt - Code generation prompt
  * @param {Array} context - Context messages
+ * @param {Object} budgetManager - Optional token budget manager
  * @returns {Promise<string>} Generated code
  */
-export async function generateCode(prompt, context = []) {
+export async function generateCode(prompt, context = [], budgetManager = null) {
   const messages = [
     {
       role: 'system',
@@ -130,7 +142,8 @@ export async function generateCode(prompt, context = []) {
 
   const result = await generateCompletion(messages, {
     temperature: 0.3, // Lower temperature for more consistent code
-    maxTokens: 8000
+    maxTokens: 8000,
+    budgetManager
   });
 
   return result.content;
@@ -140,9 +153,10 @@ export async function generateCode(prompt, context = []) {
  * Analyze code for issues
  * @param {string} code - Code to analyze
  * @param {string} context - Additional context
+ * @param {Object} budgetManager - Optional token budget manager
  * @returns {Promise<Object>} Analysis result
  */
-export async function analyzeCode(code, context = '') {
+export async function analyzeCode(code, context = '', budgetManager = null) {
   const messages = [
     {
       role: 'system',
@@ -156,7 +170,8 @@ export async function analyzeCode(code, context = '') {
 
   const result = await generateCompletion(messages, {
     temperature: 0.2,
-    maxTokens: 4000
+    maxTokens: 4000,
+    budgetManager
   });
 
   try {
@@ -182,9 +197,10 @@ export async function analyzeCode(code, context = '') {
  * Generate plan from task description
  * @param {string} task - Task description
  * @param {string} repoContext - Repository context
+ * @param {Object} budgetManager - Optional token budget manager
  * @returns {Promise<Object>} Plan object
  */
-export async function generatePlan(task, repoContext = '') {
+export async function generatePlan(task, repoContext = '', budgetManager = null) {
   const messages = [
     {
       role: 'system',
@@ -198,7 +214,8 @@ export async function generatePlan(task, repoContext = '') {
 
   const result = await generateCompletion(messages, {
     temperature: 0.4,
-    maxTokens: 6000
+    maxTokens: 6000,
+    budgetManager
   });
 
   try {
@@ -229,9 +246,10 @@ export async function generatePlan(task, repoContext = '') {
  * @param {string} code - Current code
  * @param {string} errorMessage - Error message from test/execution
  * @param {number} retryCount - Current retry count
+ * @param {Object} budgetManager - Optional token budget manager
  * @returns {Promise<string>} Fixed code
  */
-export async function fixErrors(code, errorMessage, retryCount = 0) {
+export async function fixErrors(code, errorMessage, retryCount = 0, budgetManager = null) {
   const messages = [
     {
       role: 'system',
@@ -245,7 +263,8 @@ export async function fixErrors(code, errorMessage, retryCount = 0) {
 
   const result = await generateCompletion(messages, {
     temperature: 0.2 + (retryCount * 0.05), // Increase temperature with retries
-    maxTokens: 8000
+    maxTokens: 8000,
+    budgetManager
   });
 
   // Extract code blocks if present

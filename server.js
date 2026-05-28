@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import http from 'http';
 import { initDatabase, pruneSessions } from './src/database/db.js';
+import { migrateToV2, needsMigration } from './src/database/migrate-v2.js';
 import { initBot, startBot } from './src/bot/telegram.js';
 import { ensureSandbox } from './src/utils/filesystem.js';
 import { validateEnvironment } from './src/security/sandbox.js';
@@ -32,6 +33,14 @@ async function initialize() {
   // Initialize database
   logger.info('Initializing database');
   initDatabase();
+
+  // Run V2 migration if needed
+  if (needsMigration()) {
+    logger.info('Running V2 database migration');
+    migrateToV2();
+  } else {
+    logger.info('V2 database schema already up to date');
+  }
 
   // Ensure sandbox workspace exists
   logger.info('Setting up sandbox workspace');

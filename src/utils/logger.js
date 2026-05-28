@@ -150,4 +150,34 @@ logger.logTelegram = function(type, userId, messagePreview) {
   });
 };
 
+/**
+ * V2 Enhancement: Log audit event for security tracking
+ * @param {number} userId - User ID
+ * @param {number|null} sessionId - Session ID (optional)
+ * @param {string} eventType - Event type
+ * @param {string} action - Action description
+ * @param {Object|null} details - Additional details
+ * @param {string} riskLevel - Risk level: 'low', 'medium', 'high', 'critical'
+ */
+logger.audit = async function(userId, sessionId, eventType, action, details = null, riskLevel = 'low') {
+  // Log to Winston first
+  const logLevel = riskLevel === 'critical' || riskLevel === 'high' ? 'warn' : 'info';
+  this[logLevel](`Audit: ${eventType}`, {
+    userId,
+    sessionId,
+    action,
+    riskLevel,
+    details
+  });
+
+  // Write to database (async, but don't await to avoid blocking)
+  try {
+    // Dynamic import to avoid circular dependency
+    const { logAuditEvent } = await import('../database/queries.js');
+    logAuditEvent(userId, sessionId, eventType, action, details, riskLevel);
+  } catch (error) {
+    this.error('Failed to write audit log to database', { error: error.message });
+  }
+};
+
 export default logger;

@@ -5,10 +5,16 @@ import { executeDeployPhase } from './phases/deploy.js';
 import { executeMonitorPhase } from './phases/monitor.js';
 import { fixErrors } from '../groq/client.js';
 import { buildErrorContext } from '../groq/prompts.js';
-import { createAgentRun, updateAgentRun } from '../database/queries.js';
+import { createAgentRun, updateAgentRun, getAndResumeHandoff } from '../database/queries.js';
 import { addToContext } from './context.js';
 import { readFileSafe } from '../utils/filesystem.js';
 import logger from '../utils/logger.js';
+
+// V2 Enhancements
+import TokenBudgetManager from '../groq/token-budget.js';
+import { shouldTriggerHandoff, createHandoffSnapshot, loadLatestHandoff, resumeHandoff } from './handoff.js';
+import { findKnownFix, learnFromSuccess, generateErrorSignature } from './error-learning.js';
+import { writePhaseNote, writeSessionSummary } from '../utils/obsidian.js';
 
 const MAX_RETRY_COUNT = parseInt(process.env.MAX_RETRY_COUNT || '10', 10);
 
@@ -19,8 +25,24 @@ const MAX_RETRY_COUNT = parseInt(process.env.MAX_RETRY_COUNT || '10', 10);
  * @param {Function} progressCallback - Progress callback function
  * @returns {Promise<Object>} Final result
  */
-export async function executeAgentLoop(task, sessionId, progressCallback = null) {
+export async function executeAgentLoop(task, sessionId, progressCallback = null, userId = null) {
   logger.info('Starting agent loop', { task, sessionId });
+
+  // V2: Initialize token budget manager
+  const budgetManager = new TokenBudgetManager();
+
+  // V2: Check for pending handoff (atomic operation to prevent race condition)
+  const pendingHandoff = await getAndResumeHandoff(sessionId);
+  if (pendingHandoff) {
+    logger.info('Pending handoff found, resuming session', {
+      sessionId,
+      handoffId: pendingHandoff.id,
+      retryCount: pendingHandoff.retry_count
+    });
+    // Restore budget usage
+    budgetManager.currentInput = pendingHandoff.token_usage_input || 0;
+    budgetManager.currentOutput = pendingHandoff.token_usage_output || 0;
+  }
 
   const results = {
     plan: null,
@@ -29,7 +51,8 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null)
     deploy: null,
     monitor: null,
     retryCount: 0,
-    success: false
+    success: false,
+    budgetUsage: null // V2: Track budget
   };
 
   try {
@@ -40,7 +63,7 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null)
     await reportProgress('plan', 'running', progressCallback);
     const planRunId = createAgentRun(sessionId, 'plan');
 
-    results.plan = await executePlanPhase(task);
+    results.plan = await executePlanPhase(task, budgetManager);
 
     if (!results.plan.success) {
       updateAgentRun(planRunId, 'failed', results.plan.error);
@@ -51,12 +74,39 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null)
     updateAgentRun(planRunId, 'success');
     await reportProgress('plan', 'success', progressCallback, results.plan);
 
+    // V2: Write phase note to Obsidian (fire-and-forget)
+    writePhaseNote(sessionId, 'plan', results.plan).catch(err =>
+      logger.warn('Failed to write plan phase note', { error: err.message })
+    );
+
     // Self-healing loop for EXECUTE and TEST phases
     let healingAttempt = 0;
     let executeSuccess = false;
     let lastError = null;
 
     while (healingAttempt < MAX_RETRY_COUNT && !executeSuccess) {
+      // V2: Check for handoff trigger before phase
+      if (shouldTriggerHandoff(budgetManager, healingAttempt)) {
+        logger.info('Handoff triggered, creating snapshot');
+        const handoff = await createHandoffSnapshot(
+          sessionId,
+          {
+            task,
+            currentPhase: 'execute',
+            plan: results.plan?.plan,
+            filesModified: results.execute?.filesModified || []
+          },
+          budgetManager,
+          healingAttempt,
+          lastError
+        );
+
+        results.handoffTriggered = true;
+        results.handoffId = handoff.id;
+        await reportProgress('handoff', 'created', progressCallback, { handoffId: handoff.id });
+        return results;
+      }
+
       // PHASE 2: EXECUTE
       await reportProgress('execute', 'running', progressCallback, { attempt: healingAttempt + 1 });
       const executeRunId = createAgentRun(sessionId, 'execute', { attempt: healingAttempt + 1 });
@@ -64,7 +114,7 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null)
       results.execute = await executeExecutePhase(
         results.plan.plan,
         task,
-        { attempt: healingAttempt }
+        { attempt: healingAttempt, budgetManager }
       );
 
       if (!results.execute.success) {
@@ -76,6 +126,11 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null)
 
       updateAgentRun(executeRunId, 'success', null, healingAttempt);
       await reportProgress('execute', 'success', progressCallback, results.execute);
+
+      // V2: Write phase note to Obsidian (fire-and-forget)
+      writePhaseNote(sessionId, 'execute', results.execute).catch(err =>
+        logger.warn('Failed to write execute phase note', { error: err.message })
+      );
 
       // PHASE 3: TEST
       await reportProgress('test', 'running', progressCallback);
@@ -94,7 +149,8 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null)
         });
 
         if (healingAttempt < MAX_RETRY_COUNT - 1) {
-          await healSelf(results, task, healingAttempt);
+          // V2: Pass budgetManager to healSelf
+          await healSelf(results, task, healingAttempt, budgetManager);
           healingAttempt++;
           results.retryCount = healingAttempt;
           await reportProgress('healing', 'running', progressCallback, {
@@ -110,6 +166,24 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null)
 
       updateAgentRun(testRunId, 'success', null, healingAttempt);
       await reportProgress('test', 'success', progressCallback, results.test);
+
+      // V2: Learn from successful error fix
+      if (results._pendingErrorLearning && process.env.ERROR_LEARNING_ENABLED !== 'false') {
+        const { errorSig, errorMessage, fixDescription } = results._pendingErrorLearning;
+        try {
+          await learnFromSuccess(errorMessage, fixDescription);
+          logger.info('Learned from successful error fix', { errorSig });
+          delete results._pendingErrorLearning;
+        } catch (error) {
+          logger.warn('Failed to learn from success', { error: error.message });
+        }
+      }
+
+      // V2: Write phase note to Obsidian (fire-and-forget)
+      writePhaseNote(sessionId, 'test', results.test).catch(err =>
+        logger.warn('Failed to write test phase note', { error: err.message })
+      );
+
       executeSuccess = true;
     }
 
@@ -122,7 +196,7 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null)
     await reportProgress('deploy', 'running', progressCallback);
     const deployRunId = createAgentRun(sessionId, 'deploy');
 
-    results.deploy = await executeDeployPhase(results.execute, results.test);
+    results.deploy = await executeDeployPhase(results.execute, results.test, { budgetManager, userId, sessionId });
 
     if (!results.deploy.success) {
       updateAgentRun(deployRunId, 'failed', results.deploy.error);
@@ -132,6 +206,11 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null)
 
     updateAgentRun(deployRunId, 'success');
     await reportProgress('deploy', 'success', progressCallback, results.deploy);
+
+    // V2: Write phase note to Obsidian (fire-and-forget)
+    writePhaseNote(sessionId, 'deploy', results.deploy).catch(err =>
+      logger.warn('Failed to write deploy phase note', { error: err.message })
+    );
 
     // PHASE 5: MONITOR
     await reportProgress('monitor', 'running', progressCallback);
@@ -151,26 +230,47 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null)
     updateAgentRun(monitorRunId, 'success');
     await reportProgress('monitor', 'success', progressCallback, results.monitor);
 
+    // V2: Write phase note to Obsidian (fire-and-forget)
+    writePhaseNote(sessionId, 'monitor', results.monitor).catch(err =>
+      logger.warn('Failed to write monitor phase note', { error: err.message })
+    );
+
     // Overall success
     results.success = true;
-    logger.info('Agent loop completed successfully', { sessionId, retryCount: healingAttempt });
+    results.budgetUsage = budgetManager.getUsageSummary();
+    logger.info('Agent loop completed successfully', {
+      sessionId,
+      retryCount: healingAttempt,
+      budgetUsage: results.budgetUsage
+    });
+
+    // V2: Write session summary to Obsidian (fire-and-forget)
+    writeSessionSummary(sessionId, results).catch(err =>
+      logger.warn('Failed to write session summary', { error: err.message })
+    );
 
     return results;
   } catch (error) {
     logger.error('Agent loop failed', { error: error.message, sessionId });
     results.error = error.message;
     await reportProgress('error', 'failed', progressCallback, { error: error.message });
+    // Cleanup to prevent memory leak
+    if (results._pendingErrorLearning) {
+      delete results._pendingErrorLearning;
+    }
     return results;
   }
 }
 
 /**
  * Self-healing: fix errors and update implementation
+ * V2 Enhanced: Uses error pattern learning
  * @param {Object} results - Current results
  * @param {string} task - Original task
  * @param {number} retryCount - Current retry count
+ * @param {Object} budgetManager - Token budget manager
  */
-async function healSelf(results, task, retryCount) {
+async function healSelf(results, task, retryCount, budgetManager = null) {
   try {
     logger.info('Attempting self-heal', { retryCount });
 
@@ -181,25 +281,61 @@ async function healSelf(results, task, retryCount) {
       stderr: results.test.stderr
     };
 
-    // For each modified file, attempt to fix
-    for (const file of results.execute.filesModified || []) {
-      try {
-        // Read current code
-        const currentCode = await readFileSafe(file);
+    const errorMessage = `${errorInfo.stderr}\n\nStdout:\n${errorInfo.stdout}`;
 
-        // Generate fix using AI
-        const errorMessage = `${errorInfo.stderr}\n\nStdout:\n${errorInfo.stdout}`;
-        const fixedCode = await fixErrors(currentCode, errorMessage, retryCount);
+    // V2: Generate error signature for learning
+    const errorSig = generateErrorSignature(errorMessage);
 
-        // Update the plan with fixed code approach
+    // V2: Check if we have a known fix for this error
+    const knownFix = await findKnownFix(errorMessage);
+
+    if (knownFix && process.env.ERROR_LEARNING_ENABLED !== 'false') {
+      logger.info('Applying known fix', {
+        errorType: knownFix.errorType,
+        confidence: knownFix.confidence,
+        successCount: knownFix.successCount
+      });
+
+      // Apply the known fix description to the plan
+      for (const file of results.execute.filesModified || []) {
         const step = results.plan.plan.steps.find(s => s.file === file);
         if (step) {
-          step.description = `Fix errors in ${file}: ${errorInfo.stderr.substring(0, 200)}`;
+          step.description = `${knownFix.fixDescription} (known fix, confidence: ${knownFix.confidence})`;
         }
+      }
+    } else {
+      // For each modified file, attempt to fix using AI
+      let fixApplied = false;
 
-        logger.info('Generated fix for file', { file, retryCount });
-      } catch (error) {
-        logger.error('Failed to generate fix', { file, error: error.message });
+      for (const file of results.execute.filesModified || []) {
+        try {
+          // Read current code
+          const currentCode = await readFileSafe(file);
+
+          // Generate fix using AI
+          const fixedCode = await fixErrors(currentCode, errorMessage, retryCount, budgetManager);
+
+          // Update the plan with fixed code approach
+          const step = results.plan.plan.steps.find(s => s.file === file);
+          if (step) {
+            step.description = `Fix errors in ${file}: ${errorInfo.stderr.substring(0, 200)}`;
+          }
+
+          fixApplied = true;
+          logger.info('Generated fix for file', { file, retryCount });
+        } catch (error) {
+          logger.error('Failed to generate fix', { file, error: error.message });
+        }
+      }
+
+      // V2: If fix was applied and error learning is enabled, prepare to learn from success
+      if (fixApplied) {
+        // We'll learn from success after the next successful test
+        results._pendingErrorLearning = {
+          errorSig,
+          errorMessage,
+          fixDescription: `AI-generated fix attempt ${retryCount + 1}`
+        };
       }
     }
 
@@ -208,6 +344,10 @@ async function healSelf(results, task, retryCount) {
     await new Promise(resolve => setTimeout(resolve, backoffMs));
   } catch (error) {
     logger.error('Self-healing failed', { error: error.message });
+    // Cleanup to prevent memory leak
+    if (results._pendingErrorLearning) {
+      delete results._pendingErrorLearning;
+    }
   }
 }
 

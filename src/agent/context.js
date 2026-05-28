@@ -158,12 +158,80 @@ export async function buildEnrichedContext(sessionId, repoInfo = null) {
 }
 
 /**
+ * V2 Enhancement: Estimate token count for messages
+ * Uses a simple heuristic: ~4 characters per token
+ * @param {Array} messages - Array of messages
+ * @returns {number} Estimated token count
+ */
+export function estimateTokenCount(messages) {
+  if (!messages || messages.length === 0) {
+    return 0;
+  }
+
+  const totalChars = messages.reduce((sum, msg) => {
+    return sum + (msg.content?.length || 0);
+  }, 0);
+
+  // Rough estimate: 4 characters ≈ 1 token
+  const estimatedTokens = Math.ceil(totalChars / 4);
+
+  logger.debug('Estimated token count', {
+    messageCount: messages.length,
+    totalChars,
+    estimatedTokens
+  });
+
+  return estimatedTokens;
+}
+
+/**
  * Summarize context to reduce token usage
+ * V2 Enhancement: Uses token-based truncation instead of message count
  * @param {Array} context - Context messages
- * @param {number} maxMessages - Maximum messages to keep
+ * @param {number} maxMessages - Maximum messages to keep (legacy)
+ * @param {number} maxTokens - Maximum tokens to keep (V2)
  * @returns {Array} Summarized context
  */
-export function summarizeContext(context, maxMessages = MAX_CONTEXT_MESSAGES) {
+export function summarizeContext(context, maxMessages = MAX_CONTEXT_MESSAGES, maxTokens = null) {
+  if (!context || context.length === 0) {
+    return context;
+  }
+
+  // V2: If maxTokens specified, use token-based truncation
+  if (maxTokens) {
+    const systemMessages = context.filter(msg => msg.role === 'system');
+    const nonSystemMessages = context.filter(msg => msg.role !== 'system');
+
+    // Always keep system messages
+    let result = [...systemMessages];
+    let currentTokens = estimateTokenCount(systemMessages);
+
+    // Add messages from most recent, working backwards
+    for (let i = nonSystemMessages.length - 1; i >= 0; i--) {
+      const msg = nonSystemMessages[i];
+      const msgTokens = estimateTokenCount([msg]);
+
+      if (currentTokens + msgTokens <= maxTokens) {
+        result.push(msg);
+        currentTokens += msgTokens;
+      } else {
+        logger.info('Context truncated by token budget', {
+          messagesKept: result.length,
+          messagesDropped: i + 1,
+          estimatedTokens: currentTokens
+        });
+        break;
+      }
+    }
+
+    // Restore chronological order
+    return [
+      ...systemMessages,
+      ...result.filter(msg => msg.role !== 'system').reverse()
+    ];
+  }
+
+  // Legacy: Message count-based truncation
   if (context.length <= maxMessages) {
     return context;
   }
@@ -187,5 +255,6 @@ export default {
   clearContext,
   buildEnrichedContext,
   summarizeContext,
+  estimateTokenCount, // V2 enhancement
   MAX_CONTEXT_MESSAGES
 };

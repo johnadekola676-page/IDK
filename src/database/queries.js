@@ -231,6 +231,313 @@ export function getLatestAgentRun(sessionId, phase) {
   }
 }
 
+// ============================================================================
+// V2 Enhancement: Session Handoffs
+// ============================================================================
+
+/**
+ * Create a handoff snapshot for session continuity
+ * @param {number} sessionId - Session ID
+ * @param {string} snapshotData - Markdown formatted snapshot
+ * @param {Object} tokenUsage - Token usage {input, output}
+ * @param {number} retryCount - Current retry count
+ * @param {string|null} lastError - Last error message
+ * @returns {number} Handoff ID
+ */
+export function createHandoffSnapshot(sessionId, snapshotData, tokenUsage, retryCount, lastError = null) {
+  try {
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      INSERT INTO session_handoffs (
+        session_id, snapshot_data, token_usage_input, token_usage_output,
+        retry_count, last_error
+      )
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    const result = stmt.run(
+      sessionId,
+      snapshotData,
+      tokenUsage.input || 0,
+      tokenUsage.output || 0,
+      retryCount,
+      lastError
+    );
+    logger.info(`Created handoff snapshot ${result.lastInsertRowid} for session ${sessionId}`);
+    return result.lastInsertRowid;
+  } catch (error) {
+    logger.error('Failed to create handoff snapshot', { sessionId, error: error.message });
+    throw error;
+  }
+}
+
+/**
+ * Get the latest handoff for a session
+ * @param {number} sessionId - Session ID
+ * @returns {Object|null} Handoff object or null
+ */
+export function getLatestHandoff(sessionId) {
+  try {
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      SELECT * FROM session_handoffs
+      WHERE session_id = ? AND resumed = 0
+      ORDER BY created_at DESC
+      LIMIT 1
+    `);
+    return stmt.get(sessionId);
+  } catch (error) {
+    logger.error('Failed to get latest handoff', { sessionId, error: error.message });
+    throw error;
+  }
+}
+
+/**
+ * Atomically get and mark handoff as resumed (prevents race conditions)
+ * @param {number} sessionId - Session ID
+ * @returns {Object|null} Handoff object or null
+ */
+export function getAndResumeHandoff(sessionId) {
+  try {
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      UPDATE session_handoffs
+      SET resumed = 1
+      WHERE id = (
+        SELECT id FROM session_handoffs
+        WHERE session_id = ? AND resumed = 0
+        ORDER BY created_at DESC
+        LIMIT 1
+      )
+      RETURNING *
+    `);
+    return stmt.get(sessionId);
+  } catch (error) {
+    logger.error('Failed to get and resume handoff', { sessionId, error: error.message });
+    throw error;
+  }
+}
+
+/**
+ * Mark a handoff as resumed
+ * @param {number} handoffId - Handoff ID
+ */
+export function markHandoffResumed(handoffId) {
+  try {
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      UPDATE session_handoffs
+      SET resumed = 1
+      WHERE id = ?
+    `);
+    stmt.run(handoffId);
+    logger.info(`Marked handoff ${handoffId} as resumed`);
+  } catch (error) {
+    logger.error('Failed to mark handoff as resumed', { handoffId, error: error.message });
+    throw error;
+  }
+}
+
+// ============================================================================
+// V2 Enhancement: Error Pattern Learning
+// ============================================================================
+
+/**
+ * Find a known fix for an error signature
+ * @param {string} errorSignature - Normalized error signature
+ * @returns {Object|null} Error pattern with fix or null
+ */
+export function findSimilarError(errorSignature) {
+  try {
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      SELECT * FROM error_patterns
+      WHERE error_signature = ?
+      ORDER BY success_count DESC, last_success_at DESC
+      LIMIT 1
+    `);
+    return stmt.get(errorSignature);
+  } catch (error) {
+    logger.error('Failed to find similar error', { errorSignature, error: error.message });
+    throw error;
+  }
+}
+
+/**
+ * Save a successful fix for an error pattern
+ * @param {string} errorSignature - Normalized error signature
+ * @param {string} errorType - Error type (e.g., 'syntax', 'runtime', 'test')
+ * @param {string} fixDescription - Description of the fix
+ * @returns {number} Error pattern ID
+ */
+export function saveSuccessfulFix(errorSignature, errorType, fixDescription) {
+  try {
+    const db = getDatabase();
+
+    // Try to update existing pattern first
+    const existing = findSimilarError(errorSignature);
+
+    if (existing) {
+      return incrementFixSuccess(errorSignature, fixDescription);
+    }
+
+    // Create new pattern
+    const stmt = db.prepare(`
+      INSERT INTO error_patterns (error_signature, error_type, fix_description)
+      VALUES (?, ?, ?)
+    `);
+    const result = stmt.run(errorSignature, errorType, fixDescription);
+    logger.info(`Saved new error pattern ${result.lastInsertRowid}`, { errorType });
+    return result.lastInsertRowid;
+  } catch (error) {
+    logger.error('Failed to save successful fix', { errorSignature, error: error.message });
+    throw error;
+  }
+}
+
+/**
+ * Increment success count for an error pattern
+ * @param {string} errorSignature - Error signature
+ * @param {string} fixDescription - Updated fix description
+ * @returns {number} Updated pattern ID
+ */
+export function incrementFixSuccess(errorSignature, fixDescription) {
+  try {
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      UPDATE error_patterns
+      SET success_count = success_count + 1,
+          last_success_at = CURRENT_TIMESTAMP,
+          fix_description = ?
+      WHERE error_signature = ?
+    `);
+    stmt.run(fixDescription, errorSignature);
+
+    const pattern = findSimilarError(errorSignature);
+    logger.info(`Incremented success count for error pattern`, {
+      id: pattern.id,
+      successCount: pattern.success_count
+    });
+    return pattern.id;
+  } catch (error) {
+    logger.error('Failed to increment fix success', { errorSignature, error: error.message });
+    throw error;
+  }
+}
+
+// ============================================================================
+// V2 Enhancement: Audit Logging
+// ============================================================================
+
+/**
+ * Sanitize audit details to prevent PII/secrets leakage
+ * @param {Object|null} details - Details to sanitize
+ * @returns {Object|null} Sanitized details
+ */
+function sanitizeAuditDetails(details) {
+  if (!details || typeof details !== 'object') return details;
+
+  const sanitized = { ...details };
+  const sensitivePatterns = [
+    /api[_-]?key/i,
+    /token/i,
+    /password/i,
+    /secret/i,
+    /credential/i,
+    /auth/i,
+    /bearer/i
+  ];
+
+  for (const key of Object.keys(sanitized)) {
+    if (sensitivePatterns.some(pattern => pattern.test(key))) {
+      sanitized[key] = '[REDACTED]';
+    }
+    // Also check string values for patterns like sk-...
+    if (typeof sanitized[key] === 'string' &&
+        (sanitized[key].startsWith('sk-') ||
+         sanitized[key].startsWith('Bearer ') ||
+         sanitized[key].length > 50)) {
+      sanitized[key] = '[REDACTED]';
+    }
+  }
+  return sanitized;
+}
+
+/**
+ * Log an audit event for security tracking
+ * @param {number} userId - User ID
+ * @param {number|null} sessionId - Session ID (optional)
+ * @param {string} eventType - Event type (e.g., 'file_write', 'command_exec', 'git_commit')
+ * @param {string} action - Action description
+ * @param {Object|null} details - Additional details
+ * @param {string} riskLevel - Risk level: 'low', 'medium', 'high', 'critical'
+ * @returns {number} Audit log ID
+ */
+export function logAuditEvent(userId, sessionId, eventType, action, details = null, riskLevel = 'low') {
+  try {
+    const db = getDatabase();
+    const stmt = db.prepare(`
+      INSERT INTO audit_logs (user_id, session_id, event_type, action, details, risk_level)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    const detailsJson = details ? JSON.stringify(sanitizeAuditDetails(details)) : null;
+    const result = stmt.run(userId, sessionId, eventType, action, detailsJson, riskLevel);
+    return result.lastInsertRowid;
+  } catch (error) {
+    logger.error('Failed to log audit event', { userId, eventType, error: error.message });
+    throw error;
+  }
+}
+
+/**
+ * Get audit history for a user or session
+ * @param {Object} filters - Filter options {userId, sessionId, eventType, riskLevel, limit}
+ * @returns {Array} Array of audit log objects
+ */
+export function getAuditHistory(filters = {}) {
+  try {
+    const db = getDatabase();
+    const {
+      userId = null,
+      sessionId = null,
+      eventType = null,
+      riskLevel = null,
+      limit = 100
+    } = filters;
+
+    let query = 'SELECT * FROM audit_logs WHERE 1=1';
+    const params = [];
+
+    if (userId) {
+      query += ' AND user_id = ?';
+      params.push(userId);
+    }
+
+    if (sessionId) {
+      query += ' AND session_id = ?';
+      params.push(sessionId);
+    }
+
+    if (eventType) {
+      query += ' AND event_type = ?';
+      params.push(eventType);
+    }
+
+    if (riskLevel) {
+      query += ' AND risk_level = ?';
+      params.push(riskLevel);
+    }
+
+    query += ' ORDER BY timestamp DESC LIMIT ?';
+    params.push(limit);
+
+    const stmt = db.prepare(query);
+    return stmt.all(...params);
+  } catch (error) {
+    logger.error('Failed to get audit history', { filters, error: error.message });
+    throw error;
+  }
+}
+
 export default {
   createSession,
   getActiveSession,
@@ -241,5 +548,15 @@ export default {
   createAgentRun,
   updateAgentRun,
   getAgentRuns,
-  getLatestAgentRun
+  getLatestAgentRun,
+  // V2 enhancements
+  createHandoffSnapshot,
+  getLatestHandoff,
+  getAndResumeHandoff,
+  markHandoffResumed,
+  findSimilarError,
+  saveSuccessfulFix,
+  incrementFixSuccess,
+  logAuditEvent,
+  getAuditHistory
 };

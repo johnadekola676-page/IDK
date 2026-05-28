@@ -6,10 +6,11 @@ import logger from '../../utils/logger.js';
 /**
  * Execute PLAN phase
  * @param {string} task - Task description
+ * @param {Object} budgetManager - V2: Token budget manager
  * @param {Object} context - Session context
  * @returns {Promise<Object>} Plan result
  */
-export async function executePlanPhase(task, context = {}) {
+export async function executePlanPhase(task, budgetManager = null, context = {}) {
   try {
     logger.logPhase('plan', 'started', { task });
 
@@ -17,9 +18,12 @@ export async function executePlanPhase(task, context = {}) {
     logger.info('Indexing repository structure');
     const files = await readDirectoryTree('.', 3);
 
-    // Check for claude.md
+    // Check for claude.md or CLAUDE.md
     let claudeMdContent = null;
-    if (await existsSafe('claude.md')) {
+    if (await existsSafe('CLAUDE.md')) {
+      logger.info('Found CLAUDE.md file');
+      claudeMdContent = await readFileSafe('CLAUDE.md');
+    } else if (await existsSafe('claude.md')) {
       logger.info('Found claude.md file');
       claudeMdContent = await readFileSafe('claude.md');
     }
@@ -30,9 +34,9 @@ export async function executePlanPhase(task, context = {}) {
       ? `${repoContext}\n\nProject Guidelines:\n${claudeMdContent}`
       : repoContext;
 
-    // Generate plan using AI
+    // Generate plan using AI (V2: pass budgetManager)
     logger.info('Generating implementation plan');
-    const plan = await generatePlan(task, fullContext);
+    const plan = await generatePlan(task, fullContext, budgetManager);
 
     // Validate plan structure
     if (!plan.steps || !Array.isArray(plan.steps)) {
