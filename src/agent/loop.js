@@ -500,11 +500,11 @@ async function reportProgress(phase, status, callback, sessionId = null, data = 
  * @returns {string} Formatted results
  */
 export function formatLoopResults(results) {
-  let text = '**Agent Execution Results**\n\n';
+  let text = '<b>Agent Execution Results</b>\n\n';
 
   // Plan
   if (results.plan) {
-    text += `✓ **Plan**: ${results.plan.success ? 'Success' : 'Failed'}\n`;
+    text += `✓ <b>Plan</b>: ${results.plan.success ? 'Success' : 'Failed'}\n`;
     if (results.plan.success) {
       text += `  - Steps: ${results.plan.plan.steps.length}\n`;
       text += `  - Complexity: ${results.plan.plan.estimated_complexity}\n`;
@@ -513,7 +513,7 @@ export function formatLoopResults(results) {
 
   // Execute
   if (results.execute) {
-    text += `${results.execute.success ? '✓' : '✗'} **Execute**: ${results.execute.success ? 'Success' : 'Failed'}\n`;
+    text += `${results.execute.success ? '✓' : '✗'} <b>Execute</b>: ${results.execute.success ? 'Success' : 'Failed'}\n`;
     if (results.execute.filesModified) {
       text += `  - Files modified: ${results.execute.filesModified.length}\n`;
     }
@@ -522,9 +522,9 @@ export function formatLoopResults(results) {
   // Test
   if (results.test) {
     if (results.test.skipped) {
-      text += `⊘ **Test**: Skipped\n`;
+      text += `⊘ <b>Test</b>: Skipped\n`;
     } else {
-      text += `${results.test.success ? '✓' : '✗'} **Test**: ${results.test.success ? 'Passed' : 'Failed'}\n`;
+      text += `${results.test.success ? '✓' : '✗'} <b>Test</b>: ${results.test.success ? 'Passed' : 'Failed'}\n`;
       if (results.test.insights) {
         text += `  - Tests: ${results.test.insights.passedTests}/${results.test.insights.totalTests} passed\n`;
       }
@@ -534,9 +534,9 @@ export function formatLoopResults(results) {
   // Deploy
   if (results.deploy) {
     if (results.deploy.skipped) {
-      text += `⊘ **Deploy**: Skipped\n`;
+      text += `⊘ <b>Deploy</b>: Skipped\n`;
     } else {
-      text += `${results.deploy.success ? '✓' : '✗'} **Deploy**: ${results.deploy.success ? 'Success' : 'Failed'}\n`;
+      text += `${results.deploy.success ? '✓' : '✗'} <b>Deploy</b>: ${results.deploy.success ? 'Success' : 'Failed'}\n`;
       if (results.deploy.commit) {
         text += `  - Commit: ${results.deploy.commit.hash.substring(0, 7)}\n`;
       }
@@ -546,9 +546,9 @@ export function formatLoopResults(results) {
   // Monitor
   if (results.monitor) {
     if (results.monitor.skipped) {
-      text += `⊘ **Monitor**: Skipped\n`;
+      text += `⊘ <b>Monitor</b>: Skipped\n`;
     } else {
-      text += `${results.monitor.success ? '✓' : '✗'} **Monitor**: ${results.monitor.success ? 'Success' : 'Failed'}\n`;
+      text += `${results.monitor.success ? '✓' : '✗'} <b>Monitor</b>: ${results.monitor.success ? 'Success' : 'Failed'}\n`;
       if (results.monitor.workflow) {
         text += `  - Workflow: ${results.monitor.workflow.conclusion}\n`;
       }
@@ -557,11 +557,11 @@ export function formatLoopResults(results) {
 
   // Retry info
   if (results.retryCount > 0) {
-    text += `\n🔄 **Self-healing attempts**: ${results.retryCount}\n`;
+    text += `\n🔄 <b>Self-healing attempts</b>: ${results.retryCount}\n`;
   }
 
   // Overall status
-  text += `\n**Overall**: ${results.success ? '✓ Success' : '✗ Failed'}`;
+  text += `\n<b>Overall</b>: ${results.success ? '✓ Success' : '✗ Failed'}`;
 
   return text;
 }

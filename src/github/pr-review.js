@@ -271,52 +271,52 @@ export async function postReviewComment(prNumber, body) {
 }
 
 /**
- * Format review result as markdown
+ * Format review result as HTML for Telegram
  * @param {Object} reviewResult - Review result
- * @returns {string} Formatted markdown
+ * @returns {string} Formatted HTML
  */
 export function formatReviewResult(reviewResult) {
-  let markdown = `# Pull Request Review\n\n`;
-  markdown += `**PR #${reviewResult.pr.number}**: ${reviewResult.pr.title}\n`;
-  markdown += `**Author**: ${reviewResult.pr.author}\n`;
-  markdown += `**Files Changed**: ${reviewResult.files_changed} (+${reviewResult.additions} -${reviewResult.deletions})\n\n`;
+  let html = `<b>Pull Request Review</b>\n\n`;
+  html += `<b>PR #${reviewResult.pr.number}</b>: ${reviewResult.pr.title}\n`;
+  html += `<b>Author</b>: ${reviewResult.pr.author}\n`;
+  html += `<b>Files Changed</b>: ${reviewResult.files_changed} (+${reviewResult.additions} -${reviewResult.deletions})\n\n`;
 
-  markdown += `## Review Status\n\n`;
-  markdown += `- **Approved**: ${reviewResult.review.approved ? '✅ Yes' : '❌ No'}\n`;
-  markdown += `- **Risk Level**: ${reviewResult.review.risk_level.toUpperCase()}\n\n`;
+  html += `<b>Review Status</b>\n\n`;
+  html += `- <b>Approved</b>: ${reviewResult.review.approved ? '✅ Yes' : '❌ No'}\n`;
+  html += `- <b>Risk Level</b>: ${reviewResult.review.risk_level.toUpperCase()}\n\n`;
 
   if (reviewResult.review.security_issues.length > 0) {
-    markdown += `## 🔒 Security Issues\n\n`;
+    html += `<b>🔒 Security Issues</b>\n\n`;
     for (const issue of reviewResult.review.security_issues) {
       if (issue.file) {
-        markdown += `### ${issue.file}\n`;
+        html += `<b>${issue.file}</b>\n`;
         for (const i of issue.issues) {
-          markdown += `- [${i.severity.toUpperCase()}] ${i.message}\n`;
+          html += `- [${i.severity.toUpperCase()}] ${i.message}\n`;
         }
       } else {
-        markdown += `- ${issue}\n`;
+        html += `- ${issue}\n`;
       }
     }
-    markdown += `\n`;
+    html += `\n`;
   }
 
   if (reviewResult.review.code_quality_issues.length > 0) {
-    markdown += `## 📝 Code Quality Issues\n\n`;
+    html += `<b>📝 Code Quality Issues</b>\n\n`;
     for (const issue of reviewResult.review.code_quality_issues) {
-      markdown += `- ${issue}\n`;
+      html += `- ${issue}\n`;
     }
-    markdown += `\n`;
+    html += `\n`;
   }
 
   if (reviewResult.review.suggestions.length > 0) {
-    markdown += `## 💡 Suggestions\n\n`;
+    html += `<b>💡 Suggestions</b>\n\n`;
     for (const suggestion of reviewResult.review.suggestions) {
-      markdown += `- ${suggestion}\n`;
+      html += `- ${suggestion}\n`;
     }
-    markdown += `\n`;
+    html += `\n`;
   }
 
-  return markdown;
+  return html;
 }
 
 export default {

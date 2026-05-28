@@ -28,7 +28,7 @@ const MAX_TELEGRAM_MESSAGE_LENGTH = 4096;
  */
 export function formatMessage(content, options = {}) {
   const {
-    parseMode = 'Markdown',
+    parseMode = 'HTML',
     truncate = true,
     escapeMarkdown = false
   } = options;
@@ -251,7 +251,7 @@ export function splitMessage(text, maxLength = MAX_TELEGRAM_MESSAGE_LENGTH) {
  * @returns {string} Formatted error message
  */
 export function formatError(error) {
-  return `❌ *Error:* ${error.message}\n\nPlease try again or contact support if the issue persists.`;
+  return `❌ <b>Error:</b> ${error.message}\n\nPlease try again or contact support if the issue persists.`;
 }
 
 /**
@@ -261,7 +261,7 @@ export function formatError(error) {
  * @returns {string} Formatted success message
  */
 export function formatSuccess(message) {
-  return `✅ *Success:* ${message}`;
+  return `✅ <b>Success:</b> ${message}`;
 }
 
 /**
@@ -281,7 +281,7 @@ export function formatProgress(phase, status, details = {}) {
   };
 
   const emoji = statusEmoji[status] || '🔵';
-  let message = `${emoji} *${phase.toUpperCase()}* - ${status}`;
+  let message = `${emoji} <b>${phase.toUpperCase()}</b> - ${status}`;
 
   if (details.message) {
     message += `\n${details.message}`;
@@ -298,21 +298,21 @@ export function formatProgress(phase, status, details = {}) {
  * @returns {string} Formatted summary
  */
 export function formatSOPSummary(worksheetPath, results = {}) {
-  let message = `📋 *SOP Worksheet*\n\n`;
-  message += `Path: \`${worksheetPath}\`\n\n`;
+  let message = `📋 <b>SOP Worksheet</b>\n\n`;
+  message += `Path: <code>${worksheetPath}</code>\n\n`;
 
   if (results.success) {
-    message += `✅ *Status:* Completed successfully\n\n`;
+    message += `✅ <b>Status:</b> Completed successfully\n\n`;
 
     if (results.results) {
-      message += `*Steps completed:*\n`;
+      message += `<b>Steps completed:</b>\n`;
       for (const [stepName, stepResult] of Object.entries(results.results)) {
         const emoji = stepResult.success ? '✅' : '❌';
         message += `${emoji} ${stepName}\n`;
       }
     }
   } else {
-    message += `❌ *Status:* Failed\n`;
+    message += `❌ <b>Status:</b> Failed\n`;
     message += `Error: ${results.error}\n`;
   }
 

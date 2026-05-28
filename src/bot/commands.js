@@ -13,7 +13,7 @@ import { isSOPEnabled } from '../agent/sop-integration.js';
  */
 export async function handleStart(ctx) {
   const welcomeMessage = `
-🤖 *Autonomous CI/CD Developer Agent*
+🤖 <b>Autonomous CI/CD Developer Agent</b>
 
 Welcome! I'm your autonomous development assistant. I can:
 
@@ -22,20 +22,20 @@ Welcome! I'm your autonomous development assistant. I can:
 • Monitor GitHub Actions workflows
 • Automatically fix errors and retry
 
-*Commands:*
+<b>Commands:</b>
 /start - Show this message
-/task <description> - Execute a development task
-/review_pr <number> - Review a pull request
+/task &lt;description&gt; - Execute a development task
+/review_pr &lt;number&gt; - Review a pull request
 /status - Check workflow status
 /help - Detailed help
 
-*Example:*
+<b>Example:</b>
 /task Create a REST API endpoint for user authentication
 
 Let's build something amazing! 🚀
 `;
 
-  await ctx.reply(welcomeMessage, { parse_mode: 'Markdown' });
+  await ctx.reply(welcomeMessage, { parse_mode: 'HTML' });
 }
 
 /**
@@ -43,16 +43,16 @@ Let's build something amazing! 🚀
  */
 export async function handleHelp(ctx) {
   const helpMessage = `
-📚 *Detailed Help*
+📚 <b>Detailed Help</b>
 
-*Available Commands:*
+<b>Available Commands:</b>
 
-*/task <description>*
+<b>/task &lt;description&gt;</b>
 Execute an autonomous development task using the 5-phase loop:
-1. Plan - Analyze & create implementation plan
-2. Execute - Generate & write code
-3. Test - Run tests & validate
-4. Deploy - Commit & push to GitHub
+1. Plan - Analyze &amp; create implementation plan
+2. Execute - Generate &amp; write code
+3. Test - Run tests &amp; validate
+4. Deploy - Commit &amp; push to GitHub
 5. Monitor - Watch CI/CD pipelines
 
 Features:
@@ -61,7 +61,7 @@ Features:
 - Automatic error fixing
 - Progress updates
 
-*/review_pr <number>*
+<b>/review_pr &lt;number&gt;</b>
 Review a pull request for:
 - Security vulnerabilities
 - Hardcoded credentials
@@ -69,10 +69,10 @@ Review a pull request for:
 - Code quality issues
 - Compliance with claude.md guidelines
 
-*/status*
+<b>/status</b>
 Check current GitHub Actions workflow status
 
-*Safety Features:*
+<b>Safety Features:</b>
 ✓ Command blocklist (blocks dangerous operations)
 ✓ Sandboxed execution
 ✓ User authentication
@@ -82,7 +82,7 @@ Check current GitHub Actions workflow status
 Need help? Just ask!
 `;
 
-  await ctx.reply(helpMessage, { parse_mode: 'Markdown' });
+  await ctx.reply(helpMessage, { parse_mode: 'HTML' });
 }
 
 /**
@@ -123,7 +123,7 @@ export async function handleTask(ctx) {
       if (status === 'success') emoji = '✓';
       if (status === 'failed') emoji = '✗';
 
-      let text = `${emoji} **Phase: ${phase.toUpperCase()}** - ${status}`;
+      let text = `${emoji} <b>Phase: ${phase.toUpperCase()}</b> - ${status}`;
 
       if (attempt) {
         text += `\n🔄 Self-healing attempt ${attempt}/${process.env.MAX_RETRY_COUNT || 10}`;
@@ -137,7 +137,7 @@ export async function handleTask(ctx) {
             statusMessage.message_id,
             null,
             text,
-            { parse_mode: 'Markdown' }
+            { parse_mode: 'HTML' }
           );
           lastPhase = phase;
         } catch (error) {
@@ -159,26 +159,26 @@ export async function handleTask(ctx) {
       // Format standard loop results
       formattedResults = formatLoopResults(results);
     }
-    await ctx.reply(formatMessage(formattedResults), { parse_mode: 'Markdown' });
+    await ctx.reply(formatMessage(formattedResults), { parse_mode: 'HTML' });
 
     // Send detailed error if failed
     if (!results.success) {
-      let errorDetails = '**Error Details:**\n\n';
+      let errorDetails = '<b>Error Details:</b>\n\n';
 
       if (results.test && !results.test.success && !results.test.skipped) {
-        errorDetails += `Test failed:\n\`\`\`\n${results.test.stderr?.substring(0, 500) || 'Unknown error'}\n\`\`\``;
+        errorDetails += `Test failed:\n<pre>${results.test.stderr?.substring(0, 500) || 'Unknown error'}</pre>`;
       } else if (results.error) {
-        errorDetails += `\`\`\`\n${results.error.substring(0, 500)}\n\`\`\``;
+        errorDetails += `<pre>${results.error.substring(0, 500)}</pre>`;
       }
 
-      await ctx.reply(sanitizeForTelegram(errorDetails), { parse_mode: 'Markdown' });
+      await ctx.reply(sanitizeForTelegram(errorDetails), { parse_mode: 'HTML' });
     }
 
     // Send workflow link if available
     if (results.monitor && results.monitor.workflow) {
       await ctx.reply(
-        `🔗 [View workflow run](${results.monitor.workflow.htmlUrl})`,
-        { parse_mode: 'Markdown' }
+        `🔗 <a href="${results.monitor.workflow.htmlUrl}">View workflow run</a>`,
+        { parse_mode: 'HTML' }
       );
     }
   } catch (error) {
@@ -213,13 +213,13 @@ export async function handleReviewPR(ctx) {
 
     // Format and send review
     const formattedReview = formatReviewResult(reviewResult);
-    await ctx.reply(formattedReview, { parse_mode: 'Markdown' });
+    await ctx.reply(formattedReview, { parse_mode: 'HTML' });
 
     // Send risk alert if critical
     if (reviewResult.review.risk_level === 'critical') {
       await ctx.reply(
-        '🚨 **CRITICAL RISK DETECTED**\n\nThis PR contains critical security issues. Do NOT merge until issues are resolved.',
-        { parse_mode: 'Markdown' }
+        '🚨 <b>CRITICAL RISK DETECTED</b>\n\nThis PR contains critical security issues. Do NOT merge until issues are resolved.',
+        { parse_mode: 'HTML' }
       );
     }
   } catch (error) {
@@ -247,16 +247,16 @@ export async function handleStatus(ctx) {
     if (status.conclusion === 'failure') statusEmoji = '✗';
 
     const statusText = `
-${statusEmoji} **Latest Workflow**
+${statusEmoji} <b>Latest Workflow</b>
 
 Status: ${status.status}
 Conclusion: ${status.conclusion || 'In progress'}
 Created: ${new Date(status.createdAt).toLocaleString()}
 
-[View Run](${status.htmlUrl})
+<a href="${status.htmlUrl}">View Run</a>
 `;
 
-    await ctx.reply(statusText, { parse_mode: 'Markdown' });
+    await ctx.reply(statusText, { parse_mode: 'HTML' });
   } catch (error) {
     logger.error('Status check failed', { error: error.message });
     await ctx.reply(`❌ Failed to check status: ${sanitizeForTelegram(error.message)}`);
@@ -269,7 +269,7 @@ Created: ${new Date(status.createdAt).toLocaleString()}
 export async function handleUnknown(ctx) {
   await ctx.reply(
     '❓ Unknown command. Use /help to see available commands.',
-    { parse_mode: 'Markdown' }
+    { parse_mode: 'HTML' }
   );
 }
 
