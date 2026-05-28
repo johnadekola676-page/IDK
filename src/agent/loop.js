@@ -9,12 +9,19 @@ import { createAgentRun, updateAgentRun, getAndResumeHandoff } from '../database
 import { addToContext } from './context.js';
 import { readFileSafe } from '../utils/filesystem.js';
 import logger from '../utils/logger.js';
+import { broadcastProgress } from '../api/websocket.js';
 
 // V2 Enhancements
 import TokenBudgetManager from '../groq/token-budget.js';
 import { shouldTriggerHandoff, createHandoffSnapshot, loadLatestHandoff, resumeHandoff } from './handoff.js';
 import { findKnownFix, learnFromSuccess, generateErrorSignature } from './error-learning.js';
 import { writePhaseNote, writeSessionSummary } from '../utils/obsidian.js';
+
+// V3: SOP Integration
+import { executeWithSOP, isSOPEnabled } from './sop-integration.js';
+
+// V4: Cognitive Reflection System
+import { CognitiveReflectionLoop } from './reflection/cognitive-loop.js';
 
 const MAX_RETRY_COUNT = parseInt(process.env.MAX_RETRY_COUNT || '10', 10);
 
@@ -30,6 +37,51 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
 
   // V2: Initialize token budget manager
   const budgetManager = new TokenBudgetManager();
+
+  // V4: Initialize Cognitive Reflection Loop
+  const cognitiveLoop = new CognitiveReflectionLoop(
+    process.env.SANDBOX_WORKSPACE,
+    budgetManager
+  );
+
+  // V4: Cognitive Reflection - Step 1: Pushback & Clarification
+  const clarificationCheck = await cognitiveLoop.pushback.analyzePrompt(task, budgetManager);
+
+  if (clarificationCheck.needsClarification && process.env.ENABLE_PUSHBACK_ENGINE !== 'false') {
+    logger.info('Task needs clarification, generating menu');
+
+    const menu = await cognitiveLoop.pushback.generateClarificationMenu(
+      task,
+      clarificationCheck.analysis,
+      budgetManager
+    );
+
+    // Add clarification menu to context
+    await addToContext(sessionId, 'assistant', menu);
+
+    return {
+      needsClarification: true,
+      clarificationMenu: menu,
+      analysis: clarificationCheck.analysis,
+      success: false
+    };
+  }
+
+  // V3: Try SOP execution if enabled
+  if (isSOPEnabled()) {
+    logger.info('SOP system enabled, attempting SOP execution');
+    const sopResult = await executeWithSOP(task, sessionId, progressCallback, userId);
+
+    if (sopResult && sopResult.success) {
+      logger.info('SOP execution completed successfully');
+      return sopResult;
+    } else if (sopResult && !sopResult.success) {
+      logger.warn('SOP execution failed, falling back to standard loop', {
+        error: sopResult.error
+      });
+      // Fall through to standard loop
+    }
+  }
 
   // V2: Check for pending handoff (atomic operation to prevent race condition)
   const pendingHandoff = await getAndResumeHandoff(sessionId);
@@ -60,19 +112,19 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
     await addToContext(sessionId, 'user', task);
 
     // PHASE 1: PLAN
-    await reportProgress('plan', 'running', progressCallback);
+    await reportProgress('plan', 'running', progressCallback, sessionId);
     const planRunId = createAgentRun(sessionId, 'plan');
 
     results.plan = await executePlanPhase(task, budgetManager);
 
     if (!results.plan.success) {
       updateAgentRun(planRunId, 'failed', results.plan.error);
-      await reportProgress('plan', 'failed', progressCallback, results.plan);
+      await reportProgress('plan', 'failed', progressCallback, sessionId, results.plan);
       return results;
     }
 
     updateAgentRun(planRunId, 'success');
-    await reportProgress('plan', 'success', progressCallback, results.plan);
+    await reportProgress('plan', 'success', progressCallback, sessionId, results.plan);
 
     // V2: Write phase note to Obsidian (fire-and-forget)
     writePhaseNote(sessionId, 'plan', results.plan).catch(err =>
@@ -103,12 +155,12 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
 
         results.handoffTriggered = true;
         results.handoffId = handoff.id;
-        await reportProgress('handoff', 'created', progressCallback, { handoffId: handoff.id });
+        await reportProgress('handoff', 'created', progressCallback, sessionId, { handoffId: handoff.id });
         return results;
       }
 
       // PHASE 2: EXECUTE
-      await reportProgress('execute', 'running', progressCallback, { attempt: healingAttempt + 1 });
+      await reportProgress('execute', 'running', progressCallback, sessionId, { attempt: healingAttempt + 1 });
       const executeRunId = createAgentRun(sessionId, 'execute', { attempt: healingAttempt + 1 });
 
       results.execute = await executeExecutePhase(
@@ -125,7 +177,7 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
       }
 
       updateAgentRun(executeRunId, 'success', null, healingAttempt);
-      await reportProgress('execute', 'success', progressCallback, results.execute);
+      await reportProgress('execute', 'success', progressCallback, sessionId, results.execute);
 
       // V2: Write phase note to Obsidian (fire-and-forget)
       writePhaseNote(sessionId, 'execute', results.execute).catch(err =>
@@ -133,14 +185,14 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
       );
 
       // PHASE 3: TEST
-      await reportProgress('test', 'running', progressCallback);
+      await reportProgress('test', 'running', progressCallback, sessionId);
       const testRunId = createAgentRun(sessionId, 'test');
 
       results.test = await executeTestPhase(results.execute);
 
       if (!results.test.success && !results.test.skipped) {
         updateAgentRun(testRunId, 'failed', results.test.error, healingAttempt);
-        await reportProgress('test', 'failed', progressCallback, results.test);
+        await reportProgress('test', 'failed', progressCallback, sessionId, results.test);
 
         // Enter self-healing mode
         logger.info('Entering self-healing mode', {
@@ -153,7 +205,7 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
           await healSelf(results, task, healingAttempt, budgetManager);
           healingAttempt++;
           results.retryCount = healingAttempt;
-          await reportProgress('healing', 'running', progressCallback, {
+          await reportProgress('healing', 'running', progressCallback, sessionId, {
             attempt: healingAttempt,
             maxRetries: MAX_RETRY_COUNT
           });
@@ -165,7 +217,7 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
       }
 
       updateAgentRun(testRunId, 'success', null, healingAttempt);
-      await reportProgress('test', 'success', progressCallback, results.test);
+      await reportProgress('test', 'success', progressCallback, sessionId, results.test);
 
       // V2: Learn from successful error fix
       if (results._pendingErrorLearning && process.env.ERROR_LEARNING_ENABLED !== 'false') {
@@ -192,20 +244,52 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
       return results;
     }
 
+    // V4: Cognitive Reflection - Step 2: Auto-Validation
+    if (process.env.ENABLE_AUTO_VALIDATION !== 'false' && results.execute?.filesModified?.length > 0) {
+      logger.info('Running auto-validation on modified files');
+
+      const validation = await cognitiveLoop.validator.validateFiles(
+        results.execute.filesModified,
+        budgetManager
+      );
+
+      if (!validation.allValid) {
+        logger.error('Auto-validation failed', {
+          failedCount: validation.results.filter(r => !r.valid && !r.skipped).length
+        });
+
+        results.validation = validation;
+        results.validationFailed = true;
+
+        await reportProgress('validation', 'failed', progressCallback, sessionId, { validation });
+
+        // Don't proceed to deploy if validation fails
+        return results;
+      }
+
+      logger.info('Auto-validation passed', {
+        validatedFiles: validation.results.length,
+        selfCorrected: validation.results.filter(r => r.selfCorrected).length
+      });
+
+      results.validation = validation;
+      await reportProgress('validation', 'success', progressCallback, sessionId, { validation });
+    }
+
     // PHASE 4: DEPLOY
-    await reportProgress('deploy', 'running', progressCallback);
+    await reportProgress('deploy', 'running', progressCallback, sessionId);
     const deployRunId = createAgentRun(sessionId, 'deploy');
 
     results.deploy = await executeDeployPhase(results.execute, results.test, { budgetManager, userId, sessionId });
 
     if (!results.deploy.success) {
       updateAgentRun(deployRunId, 'failed', results.deploy.error);
-      await reportProgress('deploy', 'failed', progressCallback, results.deploy);
+      await reportProgress('deploy', 'failed', progressCallback, sessionId, results.deploy);
       return results;
     }
 
     updateAgentRun(deployRunId, 'success');
-    await reportProgress('deploy', 'success', progressCallback, results.deploy);
+    await reportProgress('deploy', 'success', progressCallback, sessionId, results.deploy);
 
     // V2: Write phase note to Obsidian (fire-and-forget)
     writePhaseNote(sessionId, 'deploy', results.deploy).catch(err =>
@@ -213,7 +297,7 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
     );
 
     // PHASE 5: MONITOR
-    await reportProgress('monitor', 'running', progressCallback);
+    await reportProgress('monitor', 'running', progressCallback, sessionId);
     const monitorRunId = createAgentRun(sessionId, 'monitor');
 
     results.monitor = await executeMonitorPhase(results.deploy, {
@@ -223,12 +307,12 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
 
     if (!results.monitor.success && !results.monitor.skipped) {
       updateAgentRun(monitorRunId, 'failed', results.monitor.error);
-      await reportProgress('monitor', 'failed', progressCallback, results.monitor);
+      await reportProgress('monitor', 'failed', progressCallback, sessionId, results.monitor);
       return results;
     }
 
     updateAgentRun(monitorRunId, 'success');
-    await reportProgress('monitor', 'success', progressCallback, results.monitor);
+    await reportProgress('monitor', 'success', progressCallback, sessionId, results.monitor);
 
     // V2: Write phase note to Obsidian (fire-and-forget)
     writePhaseNote(sessionId, 'monitor', results.monitor).catch(err =>
@@ -238,10 +322,38 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
     // Overall success
     results.success = true;
     results.budgetUsage = budgetManager.getUsageSummary();
+
+    // V4: Cognitive Reflection - Step 3: Architecture Documentation
+    if (process.env.ENABLE_ARCH_DOCUMENTATION !== 'false') {
+      logger.info('Documenting architecture');
+
+      const docResult = await cognitiveLoop.archWriter.documentDecision(
+        task,
+        {
+          plan: results.plan?.plan,
+          modifiedFiles: results.execute?.filesModified || [],
+          validation: results.validation,
+          deploy: results.deploy,
+          retryCount: healingAttempt
+        },
+        results.plan?.reasoning || 'Implementation completed successfully',
+        budgetManager
+      );
+
+      if (docResult.success) {
+        logger.info('Architecture documented', { path: docResult.filePath });
+        results.architectureDocumented = true;
+        results.architectureDocPath = docResult.filePath;
+      } else {
+        logger.warn('Failed to document architecture', { error: docResult.error });
+      }
+    }
+
     logger.info('Agent loop completed successfully', {
       sessionId,
       retryCount: healingAttempt,
-      budgetUsage: results.budgetUsage
+      budgetUsage: results.budgetUsage,
+      architectureDocumented: results.architectureDocumented || false
     });
 
     // V2: Write session summary to Obsidian (fire-and-forget)
@@ -253,7 +365,7 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
   } catch (error) {
     logger.error('Agent loop failed', { error: error.message, sessionId });
     results.error = error.message;
-    await reportProgress('error', 'failed', progressCallback, { error: error.message });
+    await reportProgress('error', 'failed', progressCallback, sessionId, { error: error.message });
     // Cleanup to prevent memory leak
     if (results._pendingErrorLearning) {
       delete results._pendingErrorLearning;
@@ -358,12 +470,26 @@ async function healSelf(results, task, retryCount, budgetManager = null) {
  * @param {Function} callback - Callback function
  * @param {Object} data - Additional data
  */
-async function reportProgress(phase, status, callback, data = {}) {
+async function reportProgress(phase, status, callback, sessionId = null, data = {}) {
+  // Call the callback for Telegram notifications
   if (callback && typeof callback === 'function') {
     try {
       await callback({ phase, status, ...data });
     } catch (error) {
       logger.warn('Progress callback failed', { error: error.message });
+    }
+  }
+
+  // Broadcast to WebSocket clients for web UI
+  if (sessionId) {
+    try {
+      broadcastProgress(sessionId, {
+        phase,
+        status,
+        ...data
+      });
+    } catch (error) {
+      logger.warn('WebSocket broadcast failed', { error: error.message });
     }
   }
 }

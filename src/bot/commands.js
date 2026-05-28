@@ -5,6 +5,8 @@ import { getWorkflowStatus } from '../agent/phases/monitor.js';
 import { ensureSandbox } from '../utils/filesystem.js';
 import { validateUserInput, validatePRNumber, sanitizeForTelegram } from '../security/validation.js';
 import logger from '../utils/logger.js';
+import { formatMessage, formatSOPSummary, formatProgress } from './message-formatter.js';
+import { isSOPEnabled } from '../agent/sop-integration.js';
 
 /**
  * Handle /start command
@@ -149,8 +151,15 @@ export async function handleTask(ctx) {
     const results = await executeAgentLoop(taskDescription, session.id, progressCallback);
 
     // Format and send results
-    const formattedResults = formatLoopResults(results);
-    await ctx.reply(formattedResults, { parse_mode: 'Markdown' });
+    let formattedResults;
+    if (results.usedSOP && results.worksheetPath) {
+      // Format SOP results
+      formattedResults = formatSOPSummary(results.worksheetPath, results);
+    } else {
+      // Format standard loop results
+      formattedResults = formatLoopResults(results);
+    }
+    await ctx.reply(formatMessage(formattedResults), { parse_mode: 'Markdown' });
 
     // Send detailed error if failed
     if (!results.success) {
