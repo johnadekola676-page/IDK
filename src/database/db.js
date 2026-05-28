@@ -1,0 +1,116 @@
+import Database from 'better-sqlite3';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import { readFileSync, mkdirSync } from 'fs';
+import logger from '../utils/logger.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+let db = null;
+
+/**
+ * Initialize SQLite database with optimized settings for 1GB RAM
+ * @returns {Database} SQLite database instance
+ */
+export function initDatabase() {
+  if (db) {
+    return db;
+  }
+
+  try {
+    const dbPath = process.env.DATABASE_PATH || './data/sessions.db';
+    const dbDir = dirname(dbPath);
+
+    // Create data directory if it doesn't exist
+    mkdirSync(dbDir, { recursive: true });
+
+    logger.info(`Initializing database at ${dbPath}`);
+
+    // Initialize database with optimized pragmas for 1GB RAM
+    db = new Database(dbPath);
+
+    // Enable WAL mode for better concurrency
+    db.pragma('journal_mode = WAL');
+
+    // Set cache size to 16MB (negative value = KB)
+    db.pragma('cache_size = -16000');
+
+    // Store temp tables in memory
+    db.pragma('temp_store = MEMORY');
+
+    // Full durability for data integrity
+    db.pragma('synchronous = FULL');
+
+    // Memory-mapped I/O (512MB for 1GB RAM system)
+    db.pragma('mmap_size = 536870912');
+
+    // Read and execute schema
+    const schemaPath = join(__dirname, 'schema.sql');
+    const schema = readFileSync(schemaPath, 'utf-8');
+    db.exec(schema);
+
+    logger.info('Database initialized successfully');
+
+    // Setup cleanup on process exit
+    process.on('exit', () => {
+      if (db) {
+        db.close();
+      }
+    });
+
+    process.on('SIGINT', () => {
+      if (db) {
+        db.close();
+      }
+      process.exit(0);
+    });
+
+    return db;
+  } catch (error) {
+    logger.error('Failed to initialize database', { error: error.message });
+    throw error;
+  }
+}
+
+/**
+ * Get the database instance
+ * @returns {Database} SQLite database instance
+ */
+export function getDatabase() {
+  if (!db) {
+    return initDatabase();
+  }
+  return db;
+}
+
+/**
+ * Prune old sessions and associated data
+ * @param {number} days - Number of days to keep
+ */
+export function pruneSessions(days = 30) {
+  try {
+    const db = getDatabase();
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
+
+    const stmt = db.prepare(`
+      DELETE FROM sessions
+      WHERE last_activity < ? AND status = 'inactive'
+    `);
+
+    const result = stmt.run(cutoffDate.toISOString());
+    logger.info(`Pruned ${result.changes} old sessions`);
+
+    return result.changes;
+  } catch (error) {
+    logger.error('Failed to prune sessions', { error: error.message });
+    throw error;
+  }
+}
+
+export default {
+  initDatabase,
+  getDatabase,
+  pruneSessions
+};

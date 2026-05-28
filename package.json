@@ -1,0 +1,39 @@
+{
+  "name": "autonomous-cicd-telegram-agent",
+  "version": "1.0.0",
+  "description": "Autonomous CI/CD Telegram Developer Agent with 5-phase self-healing loop",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "init-db": "node src/database/init-db.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "ci-cd",
+    "autonomous",
+    "ai-agent",
+    "groq",
+    "github"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "telegraf": "^4.16.3",
+    "groq-sdk": "^0.7.0",
+    "@octokit/rest": "^20.1.1",
+    "better-sqlite3": "^11.7.0",
+    "fs-safe": "^2.1.0",
+    "simple-git": "^3.27.0",
+    "winston": "^3.15.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "node": ">=22.0.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
