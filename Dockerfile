@@ -47,8 +47,20 @@ WORKDIR /app
 # Copy production dependencies from builder
 COPY --from=backend-builder /app/node_modules ./node_modules
 
-# Copy application source
-COPY src ./src
+# Copy application source (explicit to ensure all directories included)
+COPY src/database ./src/database
+COPY src/agent ./src/agent
+COPY src/api ./src/api
+COPY src/bot ./src/bot
+COPY src/error-resolution ./src/error-resolution
+COPY src/github ./src/github
+COPY src/groq ./src/groq
+COPY src/interfaces ./src/interfaces
+COPY src/llm ./src/llm
+COPY src/memory ./src/memory
+COPY src/security ./src/security
+COPY src/ui ./src/ui
+COPY src/utils ./src/utils
 COPY server.js ./
 COPY package.json ./
 
