@@ -190,6 +190,7 @@ export function validateEnvironment() {
   // Check required environment variables
   const requiredVars = [
     'TELEGRAM_BOT_TOKEN',
+    'AUTHORIZED_USER_ID',
     'GROQ_API_KEY',
     'GITHUB_TOKEN',
     'GITHUB_REPO_OWNER',
