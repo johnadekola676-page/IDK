@@ -5,7 +5,8 @@ dockerfilePath = "Dockerfile"
 [deploy]
 startCommand = "node server.js"
 restartPolicyType = "ON_FAILURE"
-restartPolicyMaxRetries = 10
+restartPolicyMaxRetries = 3
+numReplicas = 1
 
 [[services]]
 name = "telegram-agent"
@@ -14,5 +15,7 @@ name = "telegram-agent"
 path = "/health"
 # Railway automatically uses the PORT environment variable for healthchecks
 # No port configuration needed - Railway will probe the dynamically assigned PORT
-initialDelaySeconds = 10
+initialDelaySeconds = 30
 periodSeconds = 30
+timeoutSeconds = 10
+failureThreshold = 3
