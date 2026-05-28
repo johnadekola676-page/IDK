@@ -12,7 +12,7 @@ import { authenticate } from '../middleware/auth.js';
 const router = Router();
 
 // Safe workspace directory
-const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || '/__modal/volumes/vo-kQcELnLuzbEEeWpAfe5rqq/claude-workspace/joychaeira76368_gmail.com/johnadekola676-page/IDK';
+const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || path.resolve(process.cwd(), 'workspace');
 
 /**
  * Validate path is within workspace

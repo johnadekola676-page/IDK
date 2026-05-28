@@ -67,15 +67,49 @@ export async function executeDeployPhase(executeResult, testResult, options = {}
     if (shouldPush) {
       try {
         const currentBranch = await getCurrentBranch();
-        logger.info('Pushing to remote', { branch: currentBranch });
 
-        await pushToRemote('origin', currentBranch);
-        pushResult = {
-          success: true,
-          branch: currentBranch
-        };
+        // GITHUB CONNECTOR INTEGRATION
+        // If AUTO_COMMIT_FIXES is enabled, use GitHub connector for enhanced metadata
+        if (process.env.AUTO_COMMIT_FIXES === 'true' && executeResult.filesModified?.length > 0) {
+          try {
+            logger.info('Pushing to remote via GitHub connector', { branch: currentBranch });
 
-        logger.info('Successfully pushed to remote');
+            const connector = await import('../github-connector.js');
+            const githubPushResult = await connector.commitAndPushChanges(
+              options.sessionId || 'unknown',
+              executeResult.filesModified,
+              commitMessage,
+              { skipPush: false, coAuthor: 'MAX Agent <max@autonomous-agent.dev>' }
+            );
+
+            if (githubPushResult.success) {
+              pushResult = {
+                success: true,
+                branch: githubPushResult.branch,
+                commit: githubPushResult.commit
+              };
+              logger.info('Successfully pushed via GitHub connector', githubPushResult);
+            } else {
+              throw new Error(githubPushResult.error);
+            }
+          } catch (connectorError) {
+            // Fallback to simple-git
+            logger.warn('GitHub connector failed, falling back to simple-git', {
+              error: connectorError.message
+            });
+
+            logger.info('Pushing to remote via simple-git', { branch: currentBranch });
+            await pushToRemote('origin', currentBranch);
+            pushResult = { success: true, branch: currentBranch };
+            logger.info('Successfully pushed to remote via simple-git');
+          }
+        } else {
+          // Standard push without GitHub connector
+          logger.info('Pushing to remote', { branch: currentBranch });
+          await pushToRemote('origin', currentBranch);
+          pushResult = { success: true, branch: currentBranch };
+          logger.info('Successfully pushed to remote');
+        }
       } catch (error) {
         logger.error('Failed to push to remote', { error: error.message });
         pushResult = {

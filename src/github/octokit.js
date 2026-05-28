@@ -10,8 +10,8 @@ export const octokit = new Octokit({
   }
 });
 
-export const REPO_OWNER = process.env.GITHUB_REPO_OWNER;
-export const REPO_NAME = process.env.GITHUB_REPO_NAME;
+export const REPO_OWNER = process.env.GITHUB_OWNER || process.env.GITHUB_REPO_OWNER;
+export const REPO_NAME = process.env.GITHUB_REPO || process.env.GITHUB_REPO_NAME;
 
 /**
  * Get repository information

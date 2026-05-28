@@ -356,6 +356,29 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
       architectureDocumented: results.architectureDocumented || false
     });
 
+    // GITHUB AUTO-COMMIT: After successful task completion
+    if (results.success && process.env.AUTO_COMMIT_FIXES === 'true') {
+      try {
+        const connector = await import('./github-connector.js');
+        const filesModified = results.execute?.filesModified || [];
+
+        if (filesModified.length > 0) {
+          const autoCommitMessage = `MAX Auto-commit: ${task}\n\nCompleted by MAX Agent autonomous execution\n- Plan phase: ${results.plan?.success ? 'Success' : 'Failed'}\n- Execute phase: ${results.execute?.success ? 'Success' : 'Failed'}\n- Test phase: ${results.test?.success ? 'Success' : 'Failed'}`;
+
+          const pushResult = await connector.commitAndPushChanges(
+            sessionId,
+            filesModified,
+            autoCommitMessage,
+            { coAuthor: 'MAX Agent <max@autonomous-agent.dev>' }
+          );
+
+          logger.info('Auto-commit completed', { success: pushResult.success });
+        }
+      } catch (error) {
+        logger.warn('Auto-commit failed (non-fatal)', { error: error.message });
+      }
+    }
+
     // V2: Write session summary to Obsidian (fire-and-forget)
     writeSessionSummary(sessionId, results).catch(err =>
       logger.warn('Failed to write session summary', { error: err.message })
