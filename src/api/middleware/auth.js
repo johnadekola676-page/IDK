@@ -3,7 +3,7 @@
  * Uses environment variable for token validation
  */
 
-import logger from '../../logger.js';
+import logger from '../../utils/logger.js';
 
 /**
  * Authenticates API requests using bearer token

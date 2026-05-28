@@ -6,7 +6,7 @@
 import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
-import logger from '../../logger.js';
+import logger from '../../utils/logger.js';
 import { authenticate } from '../middleware/auth.js';
 
 const router = Router();
