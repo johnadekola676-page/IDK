@@ -3,7 +3,7 @@ import logger from '../utils/logger.js';
 
 export const octokit = new Octokit({
   auth: process.env.GITHUB_TOKEN,
-  userAgent: 'Autonomous-CI-CD-Agent/1.0.0',
+  userAgent: 'MAX-Agent/2.0.0',
   baseUrl: 'https://api.github.com',
   headers: {
     'X-GitHub-Api-Version': '2022-11-28'

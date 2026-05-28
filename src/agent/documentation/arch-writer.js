@@ -111,14 +111,22 @@ Implementation specifics for future reference:
         model: 'llama-3.3-70b-versatile',
         messages,
         temperature: 0.3,
-        max_tokens: 2000
+        max_tokens: 2000,
+        budgetManager
       };
 
-      if (budgetManager) {
-        options.budgetManager = budgetManager;
-      }
+      // Extract budgetManager from options before API call
+      const { budgetManager: budget, ...requestOptions } = options;
 
-      const completion = await groq.chat.completions.create(options);
+      const completion = await groq.chat.completions.create(requestOptions);
+
+      // Track token usage if budgetManager exists
+      if (budget && completion.usage) {
+        budget.addUsage(
+          completion.usage.prompt_tokens,
+          completion.usage.completion_tokens
+        );
+      }
 
       const entry = completion.choices[0].message.content;
 

@@ -207,14 +207,22 @@ Respond with JSON:
         messages,
         temperature: 0.2,
         max_tokens: 1000,
-        response_format: { type: 'json_object' }
+        response_format: { type: 'json_object' },
+        budgetManager
       };
 
-      if (budgetManager) {
-        options.budgetManager = budgetManager;
-      }
+      // Extract budgetManager from options before API call
+      const { budgetManager: budget, ...requestOptions } = options;
 
-      const completion = await groq.chat.completions.create(options);
+      const completion = await groq.chat.completions.create(requestOptions);
+
+      // Track token usage if budgetManager exists
+      if (budget && completion.usage) {
+        budget.addUsage(
+          completion.usage.prompt_tokens,
+          completion.usage.completion_tokens
+        );
+      }
 
       const fix = JSON.parse(completion.choices[0].message.content);
 

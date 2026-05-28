@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 /**
- * Hermes CLI Executable
+ * MAX CLI Executable (Legacy)
  * Wrapper script for CLI mode
+ * Note: Use max-cli.js for WebSocket client
  */
 
 import '../server.js';

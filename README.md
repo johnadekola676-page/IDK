@@ -1,4 +1,6 @@
-# 🤖 Autonomous CI/CD Telegram Developer Agent
+# 🤖 MAX - Multi-Agent eXecutor System
+
+**Autonomous CI/CD Developer Agent v2.0**
 
 A fully autonomous AI-powered development agent that executes tasks through Telegram with a 5-phase self-healing loop. Built for Railway deployment with 1GB RAM optimization.
 

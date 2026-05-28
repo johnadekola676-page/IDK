@@ -81,7 +81,7 @@ export class CLITool {
   async runInteractive() {
     console.log('\n');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('🤖 HERMES CLI - Interactive Mode');
+    console.log('🤖 MAX CLI - Multi-Agent eXecutor System');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('Type your commands or "exit" to quit');
     console.log('Example: analyze package.json and suggest improvements');

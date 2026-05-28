@@ -13,7 +13,8 @@ import { isSOPEnabled } from '../agent/sop-integration.js';
  */
 export async function handleStart(ctx) {
   const welcomeMessage = `
-🤖 <b>Autonomous CI/CD Developer Agent</b>
+🤖 <b>MAX - Multi-Agent eXecutor System</b>
+<i>Autonomous CI/CD Developer Agent</i>
 
 Welcome! I'm your autonomous development assistant. I can:
 
@@ -43,7 +44,8 @@ Let's build something amazing! 🚀
  */
 export async function handleHelp(ctx) {
   const helpMessage = `
-📚 <b>Detailed Help</b>
+📚 <b>MAX - Detailed Help</b>
+<i>Multi-Agent eXecutor System</i>
 
 <b>Available Commands:</b>
 
