@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import { isCommandSafe, sanitizeCommandArgs } from './blocklist.js';
 import logger from '../utils/logger.js';
+import fs from 'fs';
 
 const COMMAND_TIMEOUT = parseInt(process.env.COMMAND_TIMEOUT_MS || '300000', 10);
 const SANDBOX_WORKSPACE = process.env.SANDBOX_WORKSPACE || './sandbox-workspace';
@@ -179,7 +180,6 @@ export function validateEnvironment() {
 
   // Check if sandbox workspace exists
   try {
-    const fs = require('fs');
     if (!fs.existsSync(SANDBOX_WORKSPACE)) {
       // This is a warning, not a fatal error - workspace will be created
       logger.warn(`Sandbox workspace does not exist yet: ${SANDBOX_WORKSPACE} (will be created)`);
