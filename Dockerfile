@@ -26,8 +26,8 @@ RUN npm run init-db
 # Create necessary directories
 RUN mkdir -p data logs sessions sandbox-workspace obsidian-vault
 
-# Expose health check port
-EXPOSE 3000
+# Railway dynamically assigns PORT - no EXPOSE needed
+# Application binds to process.env.PORT at runtime
 
 # Start application
 CMD ["node", "server.js"]
