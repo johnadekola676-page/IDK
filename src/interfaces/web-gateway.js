@@ -27,7 +27,7 @@ const __dirname = path.dirname(__filename);
 
 export class WebGateway {
   constructor() {
-    this.port = process.env.PORT || 3000;
+    this.port = Number(process.env.PORT) || 3000;
     this.app = null;
     this.server = null;
     this.io = null;
