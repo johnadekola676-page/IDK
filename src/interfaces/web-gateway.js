@@ -136,11 +136,15 @@ export class WebGateway {
    */
   async startServer() {
     return new Promise((resolve, reject) => {
-      this.server.listen(this.port, () => {
+      // Bind to 0.0.0.0 for Railway compatibility (allows external access)
+      const host = process.env.HOST || '0.0.0.0';
+
+      this.server.listen(this.port, host, () => {
         logger.info('🚀 Web Gateway listening', {
+          host,
           port: this.port,
-          webUI: `http://localhost:${this.port}`,
-          api: `http://localhost:${this.port}/api`
+          webUI: `http://${host}:${this.port}`,
+          api: `http://${host}:${this.port}/api`
         });
         resolve();
       });
