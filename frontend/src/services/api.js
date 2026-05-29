@@ -84,6 +84,9 @@ export const writeFileContent = async (path, content) => {
   return response.data;
 };
 
+// Alias for compatibility with FileExplorer component
+export const updateFileContent = writeFileContent;
+
 // Provider status (v2.0)
 export const getProviderStatus = async () => {
   try {
