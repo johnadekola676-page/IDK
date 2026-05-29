@@ -7,6 +7,7 @@
 import { GroqProvider } from './providers/groq.js';
 import { AnthropicProvider } from './providers/anthropic.js';
 import { GeminiProvider } from './providers/gemini.js';
+import { IntelligentProviderRouter } from './routing-engine.js';
 import logger from '../utils/logger.js';
 
 class LLMAdapter {
@@ -14,6 +15,7 @@ class LLMAdapter {
     this.providers = [];
     this.currentProvider = null;
     this.initialized = false;
+    this.router = null; // Intelligent routing engine (initialized after providers)
   }
 
   /**
@@ -67,9 +69,14 @@ class LLMAdapter {
 
     // Set default provider
     this.currentProvider = this.providers[0];
+
+    // Initialize intelligent routing engine
+    this.router = new IntelligentProviderRouter(this);
+
     logger.info('LLM Adapter ready', {
       availableProviders: this.providers.map(p => p.name),
-      currentProvider: this.currentProvider.name
+      currentProvider: this.currentProvider.name,
+      routingEngine: 'enabled'
     });
 
     this.initialized = true;
@@ -103,13 +110,73 @@ class LLMAdapter {
   }
 
   /**
-   * Create chat completion with automatic fallback
+   * Create chat completion with intelligent routing and automatic fallback
+   *
+   * Enhanced in v2.0 with:
+   * - Task-based provider selection
+   * - Exponential backoff with jitter for rate limits
+   * - Hot-swap to backup providers
+   *
+   * @param {Object} options - Completion options
+   * @param {Array} options.messages - Chat messages
+   * @param {number} options.temperature - Sampling temperature
+   * @param {number} options.maxTokens - Max output tokens
+   * @param {string} options.taskType - 'light' | 'complex' | 'validation' | 'generation'
+   * @returns {Promise<Object>} Completion result
    */
   async createCompletion(options) {
     if (!this.initialized) {
       this.initialize();
     }
 
+    // Use intelligent routing if taskType provided
+    const useIntelligentRouting = process.env.LLM_USE_INTELLIGENT_ROUTING !== 'false';
+    const taskType = options.taskType || 'complex';
+
+    if (useIntelligentRouting && this.router) {
+      // Estimate context size
+      const contextSize = this.estimateContextSize(options.messages || []);
+
+      // Select optimal provider
+      const selectedProviderName = this.router.selectProvider(taskType, contextSize);
+      const selectedProvider = this.providers.find(p => p.name === selectedProviderName);
+
+      if (selectedProvider) {
+        this.currentProvider = selectedProvider;
+
+        logger.debug('Using intelligent routing', {
+          taskType,
+          contextSize,
+          selectedProvider: selectedProviderName
+        });
+
+        // Execute with exponential backoff and fallback
+        const fallbackProviders = this.providers
+          .filter(p => p.name !== selectedProviderName)
+          .map(p => p.name);
+
+        try {
+          return await this.router.executeWithBackoff(
+            () => selectedProvider.createCompletion(options),
+            {
+              currentProvider: selectedProviderName,
+              fallbackProviders,
+              maxRetries: 3
+            }
+          );
+        } catch (error) {
+          logger.error('Intelligent routing failed', {
+            error: error.message,
+            taskType,
+            provider: selectedProviderName
+          });
+
+          // Fall through to legacy fallback logic
+        }
+      }
+    }
+
+    // Legacy fallback logic (preserved for compatibility)
     const autoFallback = process.env.LLM_AUTO_FALLBACK !== 'false';
     const maxAttempts = autoFallback ? this.providers.length : 1;
 
@@ -160,6 +227,26 @@ class LLMAdapter {
     throw new Error(
       `All LLM providers failed. Attempted: ${attemptedProviders.join(', ')}. Last error: ${lastError?.message}`
     );
+  }
+
+  /**
+   * Estimate context size in tokens
+   *
+   * @param {Array} messages - Chat messages
+   * @returns {number} Estimated token count
+   */
+  estimateContextSize(messages) {
+    if (!messages || messages.length === 0) {
+      return 0;
+    }
+
+    // Simple heuristic: ~4 characters per token
+    const totalChars = messages.reduce(
+      (sum, msg) => sum + (msg.content?.length || 0),
+      0
+    );
+
+    return Math.ceil(totalChars / 4);
   }
 
   /**
