@@ -1,6 +1,18 @@
 /**
  * Main Application Component
+ * Portable.dev-style Web IDE
  */
+
+import CodeStudio from './components/CodeStudio';
+import './App.css';
+
+function App() {
+  return <CodeStudio />;
+}
+
+export default App;
+
+/* Legacy code below - keeping for reference during migration
 
 import { useState, useEffect } from 'react';
 import { ChatInterface } from './components/ChatInterface';
@@ -8,9 +20,8 @@ import { SOPProgress } from './components/SOPProgress';
 import { FileTree } from './components/FileTree';
 import { useWebSocket } from './hooks/useWebSocket';
 import * as api from './services/api';
-import './App.css';
 
-function App() {
+function AppLegacy() {
   const [sessionId, setSessionId] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [messages, setMessages] = useState([]);
