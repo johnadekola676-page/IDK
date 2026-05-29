@@ -15,6 +15,7 @@
  */
 
 import { io } from 'socket.io-client';
+import axios from 'axios';
 import chalk from 'chalk';
 import { randomBytes } from 'crypto';
 
@@ -286,7 +287,69 @@ class MAXCLIClient {
   }
 
   /**
-   * Run CLI with task
+   * Submit task via HTTP API (v2.0 enhancement)
+   * @param {string} taskDescription - Task to execute
+   * @returns {Promise<Object>} Task submission result
+   */
+  async submitTask(taskDescription) {
+    try {
+      console.log(chalk.cyan('\n📤 Submitting task to MAX Agent...\n'));
+
+      const apiUrl = `${this.serverUrl}/api/agent/task`;
+
+      const response = await axios.post(apiUrl, {
+        task: taskDescription,
+        sessionId: this.sessionId,
+        userId: 'cli-user',
+        source: 'cli'
+      }, {
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.apiKey && { Authorization: `Bearer ${this.apiKey}` })
+        },
+        timeout: 10000
+      });
+
+      if (response.data && response.data.success) {
+        console.log(chalk.green('✓ Task submitted successfully'));
+        console.log(chalk.gray(`   Session ID: ${response.data.sessionId}\n`));
+
+        // Update session ID if server provided one
+        if (response.data.sessionId) {
+          this.sessionId = response.data.sessionId;
+        }
+
+        return response.data;
+      } else {
+        throw new Error(response.data?.error || 'Task submission failed');
+      }
+
+    } catch (error) {
+      if (error.response) {
+        // HTTP error response
+        const status = error.response.status;
+        const message = error.response.data?.error || error.message;
+
+        console.error(chalk.red(`✗ HTTP ${status}:`), message);
+
+        if (status === 401) {
+          console.log(chalk.yellow('\n💡 Tip: Set MAX_CLI_API_KEY environment variable'));
+        } else if (status === 404) {
+          console.log(chalk.yellow('\n💡 Tip: Ensure the server is running and URL is correct'));
+        }
+      } else if (error.code === 'ECONNREFUSED') {
+        console.error(chalk.red('✗ Connection refused'));
+        console.log(chalk.yellow('\n💡 Tip: Is the MAX server running at'), chalk.cyan(this.serverUrl), '?');
+      } else {
+        console.error(chalk.red('✗ Task submission failed:'), error.message);
+      }
+
+      throw error;
+    }
+  }
+
+  /**
+   * Run CLI with task (enhanced v2.0 with direct submission)
    * @param {string} taskDescription - Task to execute
    */
   async run(taskDescription) {
@@ -300,7 +363,7 @@ class MAXCLIClient {
 
       console.log(chalk.white('\nTask:'), chalk.cyan(taskDescription));
 
-      // Connect to server
+      // Connect to server for real-time updates
       await this.connect();
 
       // Subscribe to events
@@ -309,10 +372,18 @@ class MAXCLIClient {
       // Start health check
       this.startHealthCheck();
 
-      // Note: The actual task execution would be triggered via HTTP API
-      // This CLI client only subscribes to progress updates
-      console.log(chalk.yellow('\n⚠ Note: Task must be submitted via HTTP API or Telegram bot'));
-      console.log(chalk.gray('   This CLI client subscribes to session updates only\n'));
+      // v2.0: Submit task via HTTP API
+      try {
+        await this.submitTask(taskDescription);
+
+        console.log(chalk.cyan('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+        console.log(chalk.cyan('  Monitoring task execution (Ctrl+C to exit)'));
+        console.log(chalk.cyan('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
+
+      } catch (error) {
+        console.log(chalk.yellow('\n⚠ Task submission failed, but you can still monitor the session'));
+        console.log(chalk.gray('   Waiting for updates...\n'));
+      }
 
       // Setup graceful shutdown
       this.setupGracefulShutdown();
