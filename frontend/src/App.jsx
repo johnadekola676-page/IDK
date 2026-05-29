@@ -1,13 +1,13 @@
 /**
  * Main Application Component
- * Portable.dev-style Web IDE
+ * Simple Chat Interface
  */
 
-import CodeStudio from './components/CodeStudio';
+import SimpleChat from './components/SimpleChat';
 import './App.css';
 
 function App() {
-  return <CodeStudio />;
+  return <SimpleChat />;
 }
 
 export default App;
