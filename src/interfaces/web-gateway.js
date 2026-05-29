@@ -11,6 +11,7 @@ import cors from 'cors';
 import { Server as SocketIO } from 'socket.io';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 import { initDatabase, pruneSessions } from '../database/db.js';
 import { migrateToV2, needsMigration } from '../database/migrate-v2.js';
 import { initBot, startBot } from '../bot/telegram.js';
@@ -120,7 +121,7 @@ export class WebGateway {
     // Log frontend path for debugging
     logger.info('Frontend dist path configured', {
       frontendDistPath,
-      exists: require('fs').existsSync(frontendDistPath)
+      exists: fs.existsSync(frontendDistPath)
     });
 
     this.app.use(express.static(frontendDistPath));
@@ -128,7 +129,7 @@ export class WebGateway {
     // SPA fallback with error handling
     this.app.get(/.*/, (req, res) => {
       const indexPath = path.join(frontendDistPath, 'index.html');
-      if (require('fs').existsSync(indexPath)) {
+      if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);
       } else {
         logger.error('index.html not found', { indexPath, frontendDistPath });
