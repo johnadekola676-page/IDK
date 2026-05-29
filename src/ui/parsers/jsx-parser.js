@@ -1,4 +1,5 @@
 import logger from '../../utils/logger.js';
+import { MarkdownJSXParser } from '../../utils/markdown-jsx-parser.js';
 
 /**
  * JSX Component Parser
@@ -7,14 +8,17 @@ import logger from '../../utils/logger.js';
  * and converts them to appropriate display format (Telegram, CLI, etc.)
  *
  * Supported components:
- * - <GitHubIssue repo="owner/repo" number={123} />
- * - <GitHubPR repo="owner/repo" number={456} />
- * - <GitHubWorkflow repo="owner/repo" runId={789} />
- * - <FileTree files={["file1.js", "file2.js"]} />
- * - <CodeBlock language="javascript" code="..." />
+ * - <GitHubIssue owner="" repo="" number="" />
+ * - <GitHubPR owner="" repo="" number="" />
+ * - <GitHubWorkflow owner="" repo="" runId="" />
+ * - <FileLink path="" line="" />
+ * - <CodeBlock lang="" code="" />
  *
  * Based on Claude Code's JSX component system
  */
+
+// Create singleton parser instance
+const parser = new MarkdownJSXParser();
 
 /**
  * Parse JSX components in markdown text
@@ -27,21 +31,8 @@ export function parseJSXComponents(markdown, format = 'telegram') {
   try {
     logger.debug('Parsing JSX components', { format });
 
-    // Match self-closing JSX components: <Component prop="value" prop2={123} />
-    const componentRegex = /<(\w+)\s+([^>]+?)\s*\/>/g;
-
-    let parsedText = markdown;
-    let match;
-
-    while ((match = componentRegex.exec(markdown)) !== null) {
-      const [fullMatch, componentName, propsString] = match;
-      const props = parseProps(propsString);
-
-      const rendered = renderComponent(componentName, props, format);
-      parsedText = parsedText.replace(fullMatch, rendered);
-    }
-
-    return parsedText;
+    // Use enhanced parser
+    return parser.parse(markdown, format);
   } catch (error) {
     logger.error('Failed to parse JSX components', { error: error.message });
     return markdown; // Return original on error
@@ -328,7 +319,7 @@ export function toPlainText(markdown) {
  * @returns {string} Telegram-formatted text
  */
 export function toTelegram(markdown) {
-  return parseJSXComponents(markdown, 'telegram');
+  return parser.toTelegram(markdown);
 }
 
 /**
@@ -338,5 +329,5 @@ export function toTelegram(markdown) {
  * @returns {string} HTML
  */
 export function toHTML(markdown) {
-  return parseJSXComponents(markdown, 'html');
+  return parser.toHTML(markdown);
 }

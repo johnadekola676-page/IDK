@@ -1,4 +1,5 @@
 import logger from '../../utils/logger.js';
+import { generateCompletion } from '../../groq/client.js';
 
 /**
  * Specialist Registry
@@ -8,13 +9,15 @@ import logger from '../../utils/logger.js';
  * - Task delegation
  * - Specialist lookup
  * - Load balancing (future)
+ * - AI-powered task classification (v2.0)
  *
  * Based on Claude Code's specialist coordination system
  */
 export class SpecialistRegistry {
-  constructor() {
+  constructor(budgetManager = null) {
     this.specialists = new Map();
     this.delegationHistory = [];
+    this.budgetManager = budgetManager;
   }
 
   /**
@@ -255,5 +258,171 @@ export class SpecialistRegistry {
       : '0%';
 
     return stats;
+  }
+
+  /**
+   * AI-powered specialist selection with confidence scoring
+   * v2.0 Enhancement: Uses LLM to classify tasks and select optimal specialist
+   *
+   * @param {string} task - Task description
+   * @param {Object} context - Additional context
+   * @returns {Promise<Object>} Selection result with confidence score
+   */
+  async selectSpecialist(task, context = {}) {
+    const enableAISelection = process.env.AI_SPECIALIST_SELECTION !== 'false';
+
+    if (!enableAISelection || this.specialists.size === 0) {
+      // Fallback to basic selection
+      return this.selectSpecialistBasic(task);
+    }
+
+    try {
+      logger.info('Using AI-powered specialist selection', {
+        task: task.substring(0, 100)
+      });
+
+      const specialistList = Array.from(this.specialists.values()).map(s => ({
+        name: s.name,
+        capabilities: s.capabilities,
+        description: s.description || 'No description'
+      }));
+
+      const prompt = `You are a task classification system. Analyze the task and select the most appropriate specialist.
+
+Task: ${task}
+
+Available Specialists:
+${specialistList.map((s, i) => `${i + 1}. ${s.name}
+   Capabilities: ${s.capabilities.join(', ')}
+   Description: ${s.description}`).join('\n\n')}
+
+Respond with JSON only (no markdown):
+{
+  "selectedSpecialist": "specialist_name",
+  "confidence": 0.95,
+  "reasoning": "Why this specialist is best suited"
+}`;
+
+      const response = await generateCompletion(
+        [{ role: 'user', content: prompt }],
+        {
+          temperature: 0.3,
+          maxTokens: 500,
+          budgetManager: this.budgetManager
+        }
+      );
+
+      // Parse AI response
+      const selection = JSON.parse(response.content);
+
+      const specialist = this.findByName(selection.selectedSpecialist);
+
+      if (!specialist) {
+        logger.warn('AI selected non-existent specialist, falling back', {
+          selected: selection.selectedSpecialist
+        });
+        return this.selectSpecialistBasic(task);
+      }
+
+      logger.info('AI specialist selection completed', {
+        specialist: specialist.name,
+        confidence: selection.confidence,
+        reasoning: selection.reasoning
+      });
+
+      return {
+        specialist,
+        confidence: selection.confidence,
+        reasoning: selection.reasoning,
+        method: 'ai'
+      };
+
+    } catch (error) {
+      logger.warn('AI specialist selection failed, falling back', {
+        error: error.message
+      });
+      return this.selectSpecialistBasic(task);
+    }
+  }
+
+  /**
+   * Basic specialist selection (fallback)
+   *
+   * @param {string} task - Task description
+   * @returns {Object} Selection result
+   */
+  selectSpecialistBasic(task) {
+    const specialist = this.findSpecialist(task);
+
+    if (!specialist) {
+      return {
+        specialist: null,
+        confidence: 0,
+        reasoning: 'No specialist available',
+        method: 'basic'
+      };
+    }
+
+    return {
+      specialist,
+      confidence: 0.7, // Default confidence for basic selection
+      reasoning: 'Selected based on keyword matching',
+      method: 'basic'
+    };
+  }
+
+  /**
+   * Delegation rules decision tree
+   * v2.0 Enhancement: Provides structured delegation rules
+   *
+   * @param {string} taskType - Type of task
+   * @returns {Object} Delegation rules
+   */
+  getDelegationRules(taskType) {
+    const rules = {
+      code_generation: {
+        specialist: 'coding',
+        priority: 'high',
+        timeout: 300000, // 5 minutes
+        retries: 3
+      },
+      code_review: {
+        specialist: 'review',
+        priority: 'medium',
+        timeout: 180000, // 3 minutes
+        retries: 1
+      },
+      testing: {
+        specialist: 'qa',
+        priority: 'high',
+        timeout: 600000, // 10 minutes
+        retries: 5
+      },
+      git_operations: {
+        specialist: 'git',
+        priority: 'high',
+        timeout: 120000, // 2 minutes
+        retries: 2
+      },
+      context_gathering: {
+        specialist: 'context',
+        priority: 'high',
+        timeout: 180000, // 3 minutes
+        retries: 1
+      },
+      deployment: {
+        specialist: 'deploy',
+        priority: 'critical',
+        timeout: 600000, // 10 minutes
+        retries: 2
+      }
+    };
+
+    return rules[taskType] || {
+      specialist: 'general',
+      priority: 'medium',
+      timeout: 300000,
+      retries: 2
+    };
   }
 }

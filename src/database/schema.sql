@@ -4,7 +4,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   user_id INTEGER NOT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   status TEXT DEFAULT 'active',
-  last_activity DATETIME DEFAULT CURRENT_TIMESTAMP
+  last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
+  linked_issue TEXT
 );
 
 -- Messages table: Stores conversation history
@@ -72,6 +73,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 -- Indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+CREATE INDEX IF NOT EXISTS idx_sessions_linked_issue ON sessions(linked_issue);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_session ON agent_runs(session_id, phase);

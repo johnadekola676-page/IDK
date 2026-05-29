@@ -295,7 +295,8 @@ class MAXCLIClient {
     try {
       console.log(chalk.cyan('\n📤 Submitting task to MAX Agent...\n'));
 
-      const apiUrl = `${this.serverUrl}/api/agent/task`;
+      // Use CLI-specific endpoint (no auth required)
+      const apiUrl = `${this.serverUrl}/api/agent/cli-task`;
 
       const response = await axios.post(apiUrl, {
         task: taskDescription,

@@ -323,6 +323,10 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
     results.success = true;
     results.budgetUsage = budgetManager.getUsageSummary();
 
+    // Emit completion token for auto-archive
+    results.completionToken = '<promise>COMPLETE</promise>';
+    logger.info('Task completion protocol activated', { sessionId });
+
     // V4: Cognitive Reflection - Step 3: Architecture Documentation
     if (process.env.ENABLE_ARCH_DOCUMENTATION !== 'false') {
       logger.info('Documenting architecture');
@@ -585,6 +589,11 @@ export function formatLoopResults(results) {
 
   // Overall status
   text += `\n<b>Overall</b>: ${results.success ? '✓ Success' : '✗ Failed'}`;
+
+  // Add completion token if present
+  if (results.completionToken) {
+    text += `\n\n${results.completionToken}`;
+  }
 
   return text;
 }

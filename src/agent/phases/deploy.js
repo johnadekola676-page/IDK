@@ -7,6 +7,8 @@ import {
   getCurrentBranch
 } from '../../utils/git.js';
 import logger from '../../utils/logger.js';
+import { QuadPassValidator } from '../verification/quad-pass-validator.js';
+import { readFileSafe } from '../../utils/filesystem.js';
 
 /**
  * Execute DEPLOY phase
@@ -47,6 +49,72 @@ export async function executeDeployPhase(executeResult, testResult, options = {}
       created: status.created.length,
       deleted: status.deleted.length
     });
+
+    // Quad-pass validation (if enabled)
+    const enableQuadPass = process.env.QUAD_PASS_VALIDATION !== 'false';
+
+    if (enableQuadPass && executeResult.filesModified && executeResult.filesModified.length > 0) {
+      logger.info('Running quad-pass validation before deployment');
+
+      try {
+        // Import LLM adapter for validation
+        const { default: GroqAdapter } = await import('../../groq/groq-adapter.js');
+        const llmAdapter = new GroqAdapter();
+
+        const validator = new QuadPassValidator(llmAdapter, options.budgetManager);
+
+        // Prepare files for validation
+        const filesToValidate = [];
+        for (const filePath of executeResult.filesModified) {
+          try {
+            const code = await readFileSafe(filePath);
+            filesToValidate.push({ path: filePath, code });
+          } catch (error) {
+            logger.warn('Could not read file for validation', { filePath, error: error.message });
+          }
+        }
+
+        // Run validation
+        const validationResult = await validator.validateFiles(filesToValidate, false);
+
+        if (!validationResult.valid) {
+          logger.error('Quad-pass validation failed', {
+            filesChecked: validationResult.summary.filesChecked,
+            filesFailed: validationResult.summary.filesFailed
+          });
+
+          // Generate detailed report
+          const report = validator.generateReport(validationResult);
+          logger.info('Validation report', { report });
+
+          return {
+            success: false,
+            error: 'Quad-pass validation failed',
+            validationReport: report,
+            validationResults: validationResult
+          };
+        }
+
+        logger.info('Quad-pass validation passed', {
+          filesChecked: validationResult.summary.filesChecked
+        });
+
+      } catch (error) {
+        logger.error('Quad-pass validation error', { error: error.message });
+
+        // Check if fail-closed is enabled
+        const failClosed = process.env.QUAD_PASS_FAIL_CLOSED !== 'false';
+
+        if (failClosed) {
+          return {
+            success: false,
+            error: `Validation failed: ${error.message}`
+          };
+        } else {
+          logger.warn('Validation failed but continuing (fail-open mode)');
+        }
+      }
+    }
 
     // Add files to staging
     logger.info('Adding files to staging');

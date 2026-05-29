@@ -189,4 +189,58 @@ router.get('/runs/:sessionId/:runId', authenticate, async (req, res) => {
   }
 });
 
+/**
+ * POST /api/agent/cli-task
+ * CLI-friendly task submission (no auth required for localhost)
+ * Used by max-cli.js for direct task execution
+ */
+router.post('/cli-task', async (req, res) => {
+  try {
+    const { task, userId = 'cli_user' } = req.body;
+
+    if (!task) {
+      return res.status(400).json({ error: 'Task is required' });
+    }
+
+    // Create new session for CLI task
+    const sessionId = `cli_${Date.now()}`;
+    const now = new Date().toISOString();
+
+    db.prepare(`
+      INSERT INTO sessions (id, user_id, platform, created_at, last_activity)
+      VALUES (?, ?, 'cli', ?, ?)
+    `).run(sessionId, userId, now, now);
+
+    logger.info('CLI task submitted', {
+      sessionId,
+      task: task.substring(0, 100)
+    });
+
+    // Execute agent asynchronously
+    if (global.agentExecutor) {
+      setImmediate(() => {
+        global.agentExecutor(sessionId, task).catch(err => {
+          logger.error('CLI agent execution failed', {
+            sessionId,
+            error: err.message
+          });
+        });
+      });
+
+      res.json({
+        success: true,
+        message: 'Task started. Use max-cli subscribe to watch progress.',
+        sessionId
+      });
+    } else {
+      res.status(503).json({
+        error: 'Agent executor not available'
+      });
+    }
+  } catch (error) {
+    logger.error('Failed to submit CLI task', { error: error.message });
+    res.status(500).json({ error: 'Failed to submit CLI task' });
+  }
+});
+
 export default router;
