@@ -44,42 +44,49 @@ Let's build something amazing! 🚀
  */
 export async function handleHelp(ctx) {
   const helpMessage = `
-📚 <b>MAX - Detailed Help</b>
+📚 <b>MAX - Command Reference</b>
 <i>Multi-Agent eXecutor System</i>
 
-<b>Available Commands:</b>
+<b>🔧 Main Commands:</b>
 
 <b>/task &lt;description&gt;</b>
-Execute an autonomous development task using the 5-phase loop:
-1. Plan - Analyze &amp; create implementation plan
-2. Execute - Generate &amp; write code
-3. Test - Run tests &amp; validate
-4. Deploy - Commit &amp; push to GitHub
-5. Monitor - Watch CI/CD pipelines
-
-Features:
-- Self-healing (up to 10 retry attempts)
-- Code review before commit
-- Automatic error fixing
-- Progress updates
+Execute autonomous development tasks
+Example: /task Create a REST API endpoint
 
 <b>/review_pr &lt;number&gt;</b>
-Review a pull request for:
-- Security vulnerabilities
-- Hardcoded credentials
-- Malicious patterns
-- Code quality issues
-- Compliance with claude.md guidelines
+Review a pull request
+Example: /review_pr 42
 
 <b>/status</b>
-Check current GitHub Actions workflow status
+Check GitHub Actions workflow status
 
-<b>Safety Features:</b>
-✓ Command blocklist (blocks dangerous operations)
-✓ Sandboxed execution
-✓ User authentication
-✓ Path containment
-✓ Process timeouts
+<b>📁 Repository Commands:</b>
+
+<b>/setrepo owner/repo</b>
+Set active repository
+Example: /setrepo johnadekola676-page/IDK
+
+<b>/repos</b>
+List configured repositories
+
+<b>⚡ Quick Actions:</b>
+
+<b>/commit &lt;message&gt;</b>
+Quick commit all changes
+Example: /commit Add new feature
+
+<b>/test</b>
+Run all tests
+
+<b>/build</b>
+Build the project
+
+<b>💡 Features:</b>
+✓ 5-phase autonomous execution
+✓ Self-healing (10 retry attempts)
+✓ Code review before commit
+✓ Real-time progress updates
+✓ Multi-repository support
 
 Need help? Just ask!
 `;
@@ -266,6 +273,163 @@ Created: ${new Date(status.createdAt).toLocaleString()}
 }
 
 /**
+ * Handle /setrepo command
+ * Set the active GitHub repository for this user
+ */
+export async function handleSetRepo(ctx) {
+  const args = ctx.message.text.replace('/setrepo', '').trim();
+
+  if (!args || !args.includes('/')) {
+    await ctx.reply(
+      '📁 <b>Set Repository</b>\n\n' +
+      'Usage: /setrepo owner/repo\n\n' +
+      'Example: /setrepo johnadekola676-page/IDK',
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+
+  const [owner, repo] = args.split('/');
+
+  if (!owner || !repo) {
+    await ctx.reply('❌ Invalid format. Use: /setrepo owner/repo');
+    return;
+  }
+
+  try {
+    const userId = ctx.from.id;
+
+    // Store in session context
+    const session = getActiveSession(userId) || createSession(userId);
+
+    // Save repo selection
+    db.prepare(`
+      INSERT OR REPLACE INTO session_context (session_id, context_data)
+      VALUES (?, ?)
+    `).run(session.id, JSON.stringify({ repository: { owner, repo } }));
+
+    logger.info('Repository set for user', { userId, owner, repo });
+
+    await ctx.reply(
+      `✅ Repository set to: <b>${owner}/${repo}</b>\n\n` +
+      'All future tasks will use this repository.',
+      { parse_mode: 'HTML' }
+    );
+  } catch (error) {
+    logger.error('Failed to set repository', { error: error.message });
+    await ctx.reply('❌ Failed to set repository. Please try again.');
+  }
+}
+
+/**
+ * Handle /repos command
+ * List available repositories
+ */
+export async function handleRepos(ctx) {
+  try {
+    await ctx.reply(
+      '📁 <b>Repository Management</b>\n\n' +
+      'To set your active repository:\n' +
+      '/setrepo owner/repo\n\n' +
+      'Example:\n' +
+      '/setrepo johnadekola676-page/IDK\n\n' +
+      'Currently configured:\n' +
+      `• GITHUB_OWNER: ${process.env.GITHUB_OWNER || 'not set'}\n` +
+      `• GITHUB_REPO: ${process.env.GITHUB_REPO || 'not set'}`,
+      { parse_mode: 'HTML' }
+    );
+  } catch (error) {
+    logger.error('Failed to list repos', { error: error.message });
+    await ctx.reply('❌ Failed to list repositories.');
+  }
+}
+
+/**
+ * Handle /commit command
+ * Quick commit with message
+ */
+export async function handleCommit(ctx) {
+  const message = ctx.message.text.replace('/commit', '').trim();
+
+  if (!message) {
+    await ctx.reply(
+      '💾 <b>Quick Commit</b>\n\n' +
+      'Usage: /commit Your commit message\n\n' +
+      'Example: /commit Add new feature',
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+
+  try {
+    const userId = ctx.from.id;
+    const session = getActiveSession(userId) || createSession(userId);
+
+    await ctx.reply('⏳ Creating commit...');
+
+    // Trigger a commit task
+    await executeAgentLoop(
+      userId,
+      `Commit all changes with message: "${message}"`,
+      { sessionId: session.id }
+    );
+
+    await ctx.reply('✅ Commit created and pushed!', { parse_mode: 'HTML' });
+  } catch (error) {
+    logger.error('Commit failed', { error: error.message });
+    await ctx.reply(`❌ Commit failed: ${error.message}`);
+  }
+}
+
+/**
+ * Handle /test command
+ * Run tests
+ */
+export async function handleTest(ctx) {
+  try {
+    const userId = ctx.from.id;
+    const session = getActiveSession(userId) || createSession(userId);
+
+    await ctx.reply('🧪 Running tests...');
+
+    await executeAgentLoop(
+      userId,
+      'Run all tests and report results',
+      { sessionId: session.id }
+    );
+
+    await ctx.reply('✅ Tests completed!');
+  } catch (error) {
+    logger.error('Test failed', { error: error.message });
+    await ctx.reply(`❌ Tests failed: ${error.message}`);
+  }
+}
+
+/**
+ * Handle /build command
+ * Build the project
+ */
+export async function handleBuild(ctx) {
+  try {
+    const userId = ctx.from.id;
+    const session = getActiveSession(userId) || createSession(userId);
+
+    await ctx.reply('🔨 Building project...');
+
+    await executeAgentLoop(
+      userId,
+      'Build the project and report any errors',
+      { sessionId: session.id }
+    );
+
+    await ctx.reply('✅ Build completed!');
+  } catch (error) {
+    logger.error('Build failed', { error: error.message });
+    await ctx.reply(`❌ Build failed: ${error.message}`);
+  }
+}
+
+/**
  * Handle unknown commands
  */
 export async function handleUnknown(ctx) {
@@ -281,5 +445,10 @@ export default {
   handleTask,
   handleReviewPR,
   handleStatus,
+  handleSetRepo,
+  handleRepos,
+  handleCommit,
+  handleTest,
+  handleBuild,
   handleUnknown
 };

@@ -6,6 +6,11 @@ import {
   handleTask,
   handleReviewPR,
   handleStatus,
+  handleSetRepo,
+  handleRepos,
+  handleCommit,
+  handleTest,
+  handleBuild,
   handleUnknown
 } from './commands.js';
 import logger from '../utils/logger.js';
@@ -41,6 +46,15 @@ export function initBot() {
   bot.command('review_pr', handleReviewPR);
   bot.command('reviewpr', handleReviewPR); // Alias without underscore
   bot.command('status', handleStatus);
+
+  // Repository commands
+  bot.command('setrepo', handleSetRepo);
+  bot.command('repos', handleRepos);
+
+  // Quick actions
+  bot.command('commit', handleCommit);
+  bot.command('test', handleTest);
+  bot.command('build', handleBuild);
 
   // Handle unknown commands
   bot.on('message', handleUnknown);
