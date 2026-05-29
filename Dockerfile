@@ -77,9 +77,11 @@ RUN mkdir -p data logs sessions sandbox-workspace obsidian-vault docs /tmp/volte
 # Railway dynamically assigns PORT - no EXPOSE needed
 # Application binds to process.env.PORT at runtime
 
-# Health check (optional but recommended)
+# Health check using wget (simpler and more reliable)
+RUN apk add --no-cache wget
+
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:' + (process.env.PORT || 3000) + '/api/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"
+    CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT:-3000}/api/health || exit 1
 
 # Start application
 CMD ["node", "server.js"]

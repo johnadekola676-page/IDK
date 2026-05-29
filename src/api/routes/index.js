@@ -3,6 +3,8 @@
  */
 
 import { Router } from 'express';
+import fs from 'fs';
+import path from 'path';
 import sessionsRouter from './sessions.js';
 import messagesRouter from './messages.js';
 import agentRouter from './agent.js';
@@ -23,8 +25,6 @@ router.get('/health', (req, res) => {
 
 // Debug route to check frontend dist
 router.get('/debug/frontend', (req, res) => {
-  const fs = require('fs');
-  const path = require('path');
   const distPath = path.join(process.cwd(), 'frontend', 'dist');
   const distExists = fs.existsSync(distPath);
   const indexExists = distExists && fs.existsSync(path.join(distPath, 'index.html'));
