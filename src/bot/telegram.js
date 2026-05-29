@@ -11,6 +11,12 @@ import {
   handleCommit,
   handleTest,
   handleBuild,
+  handlePR,
+  handleDeploy,
+  handleRollback,
+  handleLogs,
+  handleFix,
+  handleDocs,
   handleUnknown
 } from './commands.js';
 import logger from '../utils/logger.js';
@@ -55,6 +61,14 @@ export function initBot() {
   bot.command('commit', handleCommit);
   bot.command('test', handleTest);
   bot.command('build', handleBuild);
+
+  // Advanced commands
+  bot.command('pr', handlePR);
+  bot.command('deploy', handleDeploy);
+  bot.command('rollback', handleRollback);
+  bot.command('logs', handleLogs);
+  bot.command('fix', handleFix);
+  bot.command('docs', handleDocs);
 
   // Handle unknown commands
   bot.on('message', handleUnknown);

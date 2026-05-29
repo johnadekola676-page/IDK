@@ -44,51 +44,42 @@ Let's build something amazing! 🚀
  */
 export async function handleHelp(ctx) {
   const helpMessage = `
-📚 <b>MAX - Command Reference</b>
+📚 <b>MAX - Complete Command Reference</b>
 <i>Multi-Agent eXecutor System</i>
 
 <b>🔧 Main Commands:</b>
+/task &lt;desc&gt; - Execute development task
+/review_pr &lt;num&gt; - Review pull request
+/status - Check workflow status
 
-<b>/task &lt;description&gt;</b>
-Execute autonomous development tasks
-Example: /task Create a REST API endpoint
-
-<b>/review_pr &lt;number&gt;</b>
-Review a pull request
-Example: /review_pr 42
-
-<b>/status</b>
-Check GitHub Actions workflow status
-
-<b>📁 Repository Commands:</b>
-
-<b>/setrepo owner/repo</b>
-Set active repository
-Example: /setrepo johnadekola676-page/IDK
-
-<b>/repos</b>
-List configured repositories
+<b>📁 Repository:</b>
+/setrepo owner/repo - Set active repo
+/repos - List repositories
 
 <b>⚡ Quick Actions:</b>
+/commit &lt;msg&gt; - Commit changes
+/test - Run tests
+/build - Build project
 
-<b>/commit &lt;message&gt;</b>
-Quick commit all changes
-Example: /commit Add new feature
+<b>🚀 Deployment:</b>
+/pr &lt;title&gt; - Create pull request
+/deploy - Deploy to production
+/rollback - Rollback last deploy
 
-<b>/test</b>
-Run all tests
+<b>🔍 Debugging:</b>
+/logs [lines] - View recent logs
+/fix &lt;issue&gt; - Auto-fix problems
+/docs - Generate documentation
 
-<b>/build</b>
-Build the project
+<b>Examples:</b>
+• /task Add user login
+• /setrepo my-org/my-repo
+• /commit Fix auth bug
+• /pr Add payment feature
+• /fix Tests failing
+• /logs 100
 
-<b>💡 Features:</b>
-✓ 5-phase autonomous execution
-✓ Self-healing (10 retry attempts)
-✓ Code review before commit
-✓ Real-time progress updates
-✓ Multi-repository support
-
-Need help? Just ask!
+Type /help for this menu anytime!
 `;
 
   await ctx.reply(helpMessage, { parse_mode: 'HTML' });
@@ -430,6 +421,184 @@ export async function handleBuild(ctx) {
 }
 
 /**
+ * Handle /pr command
+ * Create a pull request
+ */
+export async function handlePR(ctx) {
+  const title = ctx.message.text.replace('/pr', '').trim();
+
+  if (!title) {
+    await ctx.reply(
+      '🔀 <b>Create Pull Request</b>\n\n' +
+      'Usage: /pr Your PR title\n\n' +
+      'Example: /pr Add user authentication feature',
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+
+  try {
+    const userId = ctx.from.id;
+    const session = getActiveSession(userId) || createSession(userId);
+
+    await ctx.reply('⏳ Creating pull request...');
+
+    // Trigger PR creation task
+    await executeAgentLoop(
+      userId,
+      `Create a pull request with title: "${title}". Include a detailed description of changes.`,
+      { sessionId: session.id }
+    );
+
+    await ctx.reply('✅ Pull request created!');
+  } catch (error) {
+    logger.error('PR creation failed', { error: error.message });
+    await ctx.reply(`❌ Failed to create PR: ${error.message}`);
+  }
+}
+
+/**
+ * Handle /deploy command
+ * Trigger deployment
+ */
+export async function handleDeploy(ctx) {
+  try {
+    const userId = ctx.from.id;
+    const session = getActiveSession(userId) || createSession(userId);
+
+    await ctx.reply('🚀 Triggering deployment...');
+
+    await executeAgentLoop(
+      userId,
+      'Deploy the application. Push to main branch and verify deployment succeeds.',
+      { sessionId: session.id }
+    );
+
+    await ctx.reply('✅ Deployment triggered! Check /status for progress.');
+  } catch (error) {
+    logger.error('Deployment failed', { error: error.message });
+    await ctx.reply(`❌ Deployment failed: ${error.message}`);
+  }
+}
+
+/**
+ * Handle /rollback command
+ * Rollback last deployment
+ */
+export async function handleRollback(ctx) {
+  try {
+    const userId = ctx.from.id;
+    const session = getActiveSession(userId) || createSession(userId);
+
+    await ctx.reply('⏪ Rolling back...');
+
+    await executeAgentLoop(
+      userId,
+      'Rollback to the previous stable version. Revert the last commit and redeploy.',
+      { sessionId: session.id }
+    );
+
+    await ctx.reply('✅ Rollback completed!');
+  } catch (error) {
+    logger.error('Rollback failed', { error: error.message });
+    await ctx.reply(`❌ Rollback failed: ${error.message}`);
+  }
+}
+
+/**
+ * Handle /logs command
+ * View recent logs
+ */
+export async function handleLogs(ctx) {
+  const lines = ctx.message.text.replace('/logs', '').trim() || '50';
+  const numLines = parseInt(lines, 10);
+
+  if (isNaN(numLines) || numLines < 1 || numLines > 1000) {
+    await ctx.reply('❌ Invalid number. Use: /logs [1-1000]');
+    return;
+  }
+
+  try {
+    const userId = ctx.from.id;
+    const session = getActiveSession(userId) || createSession(userId);
+
+    await ctx.reply(`📋 Fetching last ${numLines} log lines...`);
+
+    await executeAgentLoop(
+      userId,
+      `Show the last ${numLines} lines of application logs. Format them clearly.`,
+      { sessionId: session.id }
+    );
+
+    await ctx.reply('✅ Logs retrieved!');
+  } catch (error) {
+    logger.error('Log fetch failed', { error: error.message });
+    await ctx.reply(`❌ Failed to fetch logs: ${error.message}`);
+  }
+}
+
+/**
+ * Handle /fix command
+ * Auto-fix common issues
+ */
+export async function handleFix(ctx) {
+  const issue = ctx.message.text.replace('/fix', '').trim();
+
+  if (!issue) {
+    await ctx.reply(
+      '🔧 <b>Auto-Fix</b>\n\n' +
+      'Usage: /fix Description of the issue\n\n' +
+      'Example: /fix Tests are failing\n\n' +
+      'The agent will analyze and fix the issue automatically.',
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+
+  try {
+    const userId = ctx.from.id;
+    const session = getActiveSession(userId) || createSession(userId);
+
+    await ctx.reply('🔍 Analyzing issue...');
+
+    await executeAgentLoop(
+      userId,
+      `Fix this issue: ${issue}. Analyze, debug, and implement a solution. Run tests to verify the fix.`,
+      { sessionId: session.id }
+    );
+
+    await ctx.reply('✅ Issue fixed!');
+  } catch (error) {
+    logger.error('Fix failed', { error: error.message });
+    await ctx.reply(`❌ Fix failed: ${error.message}`);
+  }
+}
+
+/**
+ * Handle /docs command
+ * Generate documentation
+ */
+export async function handleDocs(ctx) {
+  try {
+    const userId = ctx.from.id;
+    const session = getActiveSession(userId) || createSession(userId);
+
+    await ctx.reply('📚 Generating documentation...');
+
+    await executeAgentLoop(
+      userId,
+      'Generate comprehensive documentation for the codebase. Create/update README, API docs, and code comments.',
+      { sessionId: session.id }
+    );
+
+    await ctx.reply('✅ Documentation generated!');
+  } catch (error) {
+    logger.error('Docs generation failed', { error: error.message });
+    await ctx.reply(`❌ Documentation failed: ${error.message}`);
+  }
+}
+
+/**
  * Handle unknown commands
  */
 export async function handleUnknown(ctx) {
@@ -450,5 +619,11 @@ export default {
   handleCommit,
   handleTest,
   handleBuild,
+  handlePR,
+  handleDeploy,
+  handleRollback,
+  handleLogs,
+  handleFix,
+  handleDocs,
   handleUnknown
 };
