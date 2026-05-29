@@ -12,7 +12,7 @@ numReplicas = 1
 name = "telegram-agent"
 
 [services.healthcheck]
-path = "/health"
+path = "/api/health"
 # Railway automatically uses the PORT environment variable for healthchecks
 # No port configuration needed - Railway will probe the dynamically assigned PORT
 initialDelaySeconds = 30
