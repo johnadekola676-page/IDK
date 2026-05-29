@@ -116,11 +116,24 @@ export class WebGateway {
 
     // Serve frontend static files
     const frontendDistPath = path.join(path.dirname(__dirname), '..', 'frontend', 'dist');
+
+    // Log frontend path for debugging
+    logger.info('Frontend dist path configured', {
+      frontendDistPath,
+      exists: require('fs').existsSync(frontendDistPath)
+    });
+
     this.app.use(express.static(frontendDistPath));
 
-    // SPA fallback
+    // SPA fallback with error handling
     this.app.get(/.*/, (req, res) => {
-      res.sendFile(path.join(frontendDistPath, 'index.html'));
+      const indexPath = path.join(frontendDistPath, 'index.html');
+      if (require('fs').existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        logger.error('index.html not found', { indexPath, frontendDistPath });
+        res.status(404).send('Frontend not built. index.html missing.');
+      }
     });
 
     // Initialize WebSocket

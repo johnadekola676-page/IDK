@@ -21,6 +21,23 @@ router.get('/health', (req, res) => {
   });
 });
 
+// Debug route to check frontend dist
+router.get('/debug/frontend', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  const distPath = path.join(process.cwd(), 'frontend', 'dist');
+  const distExists = fs.existsSync(distPath);
+  const indexExists = distExists && fs.existsSync(path.join(distPath, 'index.html'));
+
+  res.json({
+    distPath,
+    distExists,
+    indexExists,
+    cwd: process.cwd(),
+    files: distExists ? fs.readdirSync(distPath) : []
+  });
+});
+
 // Mount route modules
 router.use('/sessions', sessionsRouter);
 router.use('/messages', messagesRouter);
