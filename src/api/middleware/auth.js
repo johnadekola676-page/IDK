@@ -20,6 +20,12 @@ export function authenticate(req, res, next) {
       return next();
     }
 
+    // Allow web UI requests (no auth required for web interface)
+    // The web UI connects via WebSocket from same origin
+    if (process.env.DISABLE_WEB_UI_AUTH === 'true') {
+      return next();
+    }
+
     // Check for authorization header
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       logger.warn('API request without authorization header', {
