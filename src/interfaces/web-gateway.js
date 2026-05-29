@@ -14,6 +14,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { initDatabase, pruneSessions } from '../database/db.js';
 import { migrateToV2, needsMigration } from '../database/migrate-v2.js';
+import { runMAXMigration } from '../database/migrate-max.js';
 import { initBot, startBot } from '../bot/telegram.js';
 import { ensureSandbox } from '../utils/filesystem.js';
 import { validateEnvironment } from '../security/sandbox.js';
@@ -70,6 +71,10 @@ export class WebGateway {
       logger.info('Running V2 migration');
       migrateToV2();
     }
+
+    // Run MAX migration
+    logger.info('Running MAX migration');
+    runMAXMigration();
 
     // Prune old sessions
     pruneSessions();

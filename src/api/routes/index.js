@@ -9,6 +9,7 @@ import sessionsRouter from './sessions.js';
 import messagesRouter from './messages.js';
 import agentRouter from './agent.js';
 import filesRouter from './files.js';
+import maxRouter from './max.js';
 
 const router = Router();
 
@@ -43,5 +44,6 @@ router.use('/sessions', sessionsRouter);
 router.use('/messages', messagesRouter);
 router.use('/agent', agentRouter);
 router.use('/files', filesRouter);
+router.use('/max', maxRouter);
 
 export default router;
