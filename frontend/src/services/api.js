@@ -84,4 +84,26 @@ export const writeFileContent = async (path, content) => {
   return response.data;
 };
 
+// Provider status (v2.0)
+export const getProviderStatus = async () => {
+  try {
+    const response = await api.get('/agent/providers');
+    return response.data;
+  } catch (error) {
+    console.error('Failed to get provider status:', error);
+    return {};
+  }
+};
+
+// Cost breakdown (v2.0)
+export const getCostBreakdown = async () => {
+  try {
+    const response = await api.get('/agent/costs');
+    return response.data;
+  } catch (error) {
+    console.error('Failed to get cost breakdown:', error);
+    return { total: 0, breakdown: {} };
+  }
+};
+
 export default api;
