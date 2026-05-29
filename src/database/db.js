@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { readFileSync, mkdirSync } from 'fs';
 import logger from '../utils/logger.js';
+import { runMigrations } from './migrate.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -49,6 +50,9 @@ export function initDatabase() {
     const schemaPath = join(__dirname, 'schema.sql');
     const schema = readFileSync(schemaPath, 'utf-8');
     db.exec(schema);
+
+    // Run migrations to update existing databases
+    runMigrations(db);
 
     logger.info('Database initialized successfully');
 

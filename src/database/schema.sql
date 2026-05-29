@@ -1,7 +1,8 @@
 -- Sessions table: Tracks user conversation sessions
 CREATE TABLE IF NOT EXISTS sessions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  platform TEXT DEFAULT 'telegram' CHECK(platform IN ('telegram', 'web', 'cli')),
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   status TEXT DEFAULT 'active',
   last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
