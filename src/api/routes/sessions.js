@@ -156,7 +156,7 @@ router.get('/:sessionId/messages', async (req, res) => {
       stmt = db.prepare(`
         SELECT * FROM messages
         WHERE session_id = ? AND id > ?
-        ORDER BY created_at ASC
+        ORDER BY timestamp ASC
       `);
       const messages = stmt.all(sessionId, parseInt(since));
       res.json(messages);
@@ -164,7 +164,7 @@ router.get('/:sessionId/messages', async (req, res) => {
       stmt = db.prepare(`
         SELECT * FROM messages
         WHERE session_id = ?
-        ORDER BY created_at ASC
+        ORDER BY timestamp ASC
       `);
       const messages = stmt.all(sessionId);
       res.json(messages);

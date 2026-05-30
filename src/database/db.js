@@ -4,6 +4,8 @@ import { dirname, join } from 'path';
 import { readFileSync, mkdirSync } from 'fs';
 import logger from '../utils/logger.js';
 import { runMigrations } from './migrate.js';
+import { runMAXMigration } from './migrate-max.js';
+import { migrateFixMaxTasks } from './migrate-fix-max-tasks.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -53,6 +55,28 @@ export function initDatabase() {
 
     // Run migrations to update existing databases
     runMigrations(db);
+
+    // Apply MAX tables migration
+    try {
+      runMAXMigration(db);
+      logger.info('MAX migration completed');
+    } catch (error) {
+      logger.error('Failed to apply MAX migration', {
+        error: error.message
+      });
+      // Don't throw - allow app to continue
+    }
+
+    // Apply max_tasks schema fix migration
+    try {
+      migrateFixMaxTasks(db);
+      logger.info('max_tasks schema fix migration completed');
+    } catch (error) {
+      logger.error('Failed to apply max_tasks schema fix migration', {
+        error: error.message
+      });
+      // Don't throw - allow app to continue with new schema
+    }
 
     logger.info('Database initialized successfully');
 

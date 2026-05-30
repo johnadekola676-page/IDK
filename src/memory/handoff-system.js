@@ -78,7 +78,7 @@ async function getSessionData(sessionId) {
 
   // Get all messages
   const messages = db
-    .prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC')
+    .prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC')
     .all(sessionId);
 
   // Get agent runs

@@ -36,7 +36,7 @@ export function runMAXMigration(db = null) {
     database.exec(`
       CREATE TABLE IF NOT EXISTS max_tasks (
         id TEXT PRIMARY KEY,
-        session_id INTEGER NOT NULL,
+        session_id TEXT NOT NULL,
         description TEXT NOT NULL,
         status TEXT NOT NULL CHECK(status IN ('planning', 'executing', 'completed', 'failed')),
         created_at INTEGER NOT NULL,
