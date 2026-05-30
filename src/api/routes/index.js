@@ -11,6 +11,7 @@ import agentRouter from './agent.js';
 import filesRouter from './files.js';
 import maxRouter from './max.js';
 import configRouter from './config.js';
+import reposRouter from './repos.js';
 
 const router = Router();
 
@@ -47,6 +48,7 @@ router.use('/agent', agentRouter);
 router.use('/files', filesRouter);
 router.use('/max', maxRouter);
 router.use('/config', configRouter);
+router.use('/repos', reposRouter);
 
 // Expose runtime endpoint at /api/runtime (from agent router)
 import { getDatabase } from '../../database/db.js';
