@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 -- Messages table: Stores conversation history
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id INTEGER NOT NULL,
+  session_id TEXT NOT NULL,
   role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
   content TEXT NOT NULL,
   timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS messages (
 -- Agent runs table: Tracks agent execution phases
 CREATE TABLE IF NOT EXISTS agent_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id INTEGER NOT NULL,
+  session_id TEXT NOT NULL,
   phase TEXT NOT NULL CHECK(phase IN ('plan', 'execute', 'test', 'deploy', 'monitor')),
   status TEXT NOT NULL CHECK(status IN ('pending', 'running', 'success', 'failed', 'retrying')),
   error_message TEXT,
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 -- V2 Enhancement: Session handoffs table for session continuity
 CREATE TABLE IF NOT EXISTS session_handoffs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id INTEGER NOT NULL,
+  session_id TEXT NOT NULL,
   snapshot_data TEXT NOT NULL,
   token_usage_input INTEGER DEFAULT 0,
   token_usage_output INTEGER DEFAULT 0,
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS error_patterns (
 CREATE TABLE IF NOT EXISTS audit_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL,
-  session_id INTEGER,
+  session_id TEXT,
   event_type TEXT NOT NULL,
   action TEXT NOT NULL,
   details TEXT,

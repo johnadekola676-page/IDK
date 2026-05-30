@@ -599,13 +599,118 @@ export async function handleDocs(ctx) {
 }
 
 /**
- * Handle unknown commands
+ * Handle unknown commands and natural language messages
+ * Supports both failed commands and natural language task requests
  */
 export async function handleUnknown(ctx) {
-  await ctx.reply(
-    '❓ Unknown command. Use /help to see available commands.',
-    { parse_mode: 'HTML' }
-  );
+  // Ignore non-text messages (stickers, images, etc.)
+  if (!ctx.message?.text) {
+    return;
+  }
+
+  const text = ctx.message.text.trim();
+
+  // If it starts with /, it's a failed command
+  if (text.startsWith('/')) {
+    await ctx.reply(
+      '❓ Unknown command. Use /help to see available commands.',
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+
+  // Otherwise, treat as natural language task request
+  const validation = validateUserInput(text);
+  if (!validation.valid) {
+    await ctx.reply(`❌ Invalid input: ${validation.reason}`);
+    return;
+  }
+
+  const userId = ctx.from.id;
+
+  try {
+    // Ensure sandbox is ready
+    await ensureSandbox();
+
+    // CRITICAL: Create or get session BEFORE any database operations
+    let session = getActiveSession(userId);
+    if (!session) {
+      const sessionId = createSession(userId);
+      session = { id: sessionId };
+    }
+
+    // Send initial status
+    const statusMessage = await ctx.reply('🤖 Processing your request...\n\nPhase: Planning');
+    let lastPhase = 'plan';
+
+    // Progress callback
+    const progressCallback = async (progress) => {
+      const { phase, status, attempt } = progress;
+
+      let emoji = '⏳';
+      if (status === 'success') emoji = '✓';
+      if (status === 'failed') emoji = '✗';
+
+      let text = `${emoji} <b>Phase: ${phase.toUpperCase()}</b> - ${status}`;
+
+      if (attempt) {
+        text += `\n🔄 Self-healing attempt ${attempt}/${process.env.MAX_RETRY_COUNT || 10}`;
+      }
+
+      // Only update if phase changed
+      if (phase !== lastPhase || status === 'success' || status === 'failed') {
+        try {
+          await ctx.telegram.editMessageText(
+            statusMessage.chat.id,
+            statusMessage.message_id,
+            null,
+            text,
+            { parse_mode: 'HTML' }
+          );
+          lastPhase = phase;
+        } catch (error) {
+          // Ignore edit errors (message too old, etc.)
+        }
+      }
+    };
+
+    // Execute agent loop with natural language input
+    logger.info('Executing agent loop for natural language input', { text, userId });
+    const results = await executeAgentLoop(text, session.id, progressCallback);
+
+    // Format and send results (same as /task command)
+    let formattedResults;
+    if (results.usedSOP && results.worksheetPath) {
+      formattedResults = formatSOPSummary(results.worksheetPath, results);
+    } else {
+      formattedResults = formatLoopResults(results);
+    }
+    await ctx.reply(formatMessage(formattedResults), { parse_mode: 'HTML' });
+
+    // Send detailed error if failed
+    if (!results.success) {
+      let errorDetails = '<b>Error Details:</b>\n\n';
+
+      if (results.test && !results.test.success && !results.test.skipped) {
+        errorDetails += `Test failed:\n<pre>${results.test.stderr?.substring(0, 500) || 'Unknown error'}</pre>`;
+      } else if (results.error) {
+        errorDetails += `<pre>${results.error.substring(0, 500)}</pre>`;
+      }
+
+      await ctx.reply(sanitizeForTelegram(errorDetails), { parse_mode: 'HTML' });
+    }
+
+    // Send workflow link if available
+    if (results.monitor && results.monitor.workflow) {
+      await ctx.reply(
+        `🔗 <a href="${results.monitor.workflow.htmlUrl}">View workflow run</a>`,
+        { parse_mode: 'HTML' }
+      );
+    }
+  } catch (error) {
+    logger.error('Natural language processing failed', { error: error.message, userId });
+    await ctx.reply(`❌ Failed to process: ${sanitizeForTelegram(error.message)}`);
+  }
 }
 
 export default {

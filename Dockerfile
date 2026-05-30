@@ -28,7 +28,7 @@ RUN apk add --no-cache python3 make g++
 WORKDIR /app
 
 # Copy backend package files
-COPY package.json package-lock.json ./
+COPY package.json package-lock*.json ./
 
 # Install ONLY production dependencies
 RUN npm ci --only=production && npm cache clean --force
