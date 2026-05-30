@@ -83,6 +83,7 @@ COPY src/interfaces ./src/interfaces
 COPY src/llm ./src/llm
 COPY src/memory ./src/memory
 COPY src/security ./src/security
+COPY src/skills ./src/skills
 COPY src/ui ./src/ui
 COPY src/utils ./src/utils
 COPY server.js ./
