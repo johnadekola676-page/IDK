@@ -37,7 +37,7 @@ export async function handleTelegramMessage(ctx) {
     } else if (text.startsWith('/status')) {
       await handleStatusCommand(ctx, userId);
     } else if (text.startsWith('/repos')) {
-      await handleReposCommand(ctx, userId);
+      await handleReposCommand(ctx, userId, text);
     } else if (text.startsWith('/model')) {
       await handleModelCommand(ctx, userId);
     } else if (text.startsWith('/agents')) {
@@ -153,16 +153,96 @@ Current Model: ${session.currentModel || 'groq-llama-70b'}
 }
 
 /**
- * /repos - List configured repositories
+ * /repos - List configured repositories and switch
  */
-async function handleReposCommand(ctx, userId) {
-  // TODO: Implement repo listing from database
-  await ctx.reply(
-    '📦 *Configured Repositories*\n\n' +
-    'This feature will show your connected repositories.\n' +
-    'Coming soon!',
-    { parse_mode: 'Markdown' }
-  );
+async function handleReposCommand(ctx, userId, text) {
+  try {
+    const { getDatabase } = await import('../database/db.js');
+    const db = getDatabase();
+
+    // Check if user is setting a repo: /repos set owner/repo
+    const setMatch = text.match(/\/repos\s+set\s+([a-zA-Z0-9-_]+)\/([a-zA-Z0-9-_\.]+)/);
+
+    if (setMatch) {
+      const [, owner, repo] = setMatch;
+
+      // Save to database
+      db.prepare(`
+        INSERT INTO user_preferences (user_id, repo_owner, repo_name, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+          repo_owner = excluded.repo_owner,
+          repo_name = excluded.repo_name,
+          updated_at = excluded.updated_at
+      `).run(String(userId), owner, repo, new Date().toISOString());
+
+      await ctx.reply(
+        `✅ *Repository Updated*\n\n` +
+        `Your tasks will now use:\n\`${owner}/${repo}\`\n\n` +
+        `Use \`/repos\` to see current configuration.`,
+        { parse_mode: 'Markdown' }
+      );
+
+      logger.info('REPO_UPDATED', { userId, owner, repo });
+      return;
+    }
+
+    // Get user's current repository preference
+    const userPref = db.prepare(`
+      SELECT repo_owner, repo_name
+      FROM user_preferences
+      WHERE user_id = ?
+    `).get(String(userId));
+
+    // Get default from environment
+    const defaultOwner = process.env.GITHUB_OWNER || 'Not set';
+    const defaultRepo = process.env.GITHUB_REPO || 'Not set';
+
+    const currentRepo = userPref
+      ? `${userPref.repo_owner}/${userPref.repo_name}`
+      : `${defaultOwner}/${defaultRepo} (default)`;
+
+    // Create inline keyboard with quick actions
+    const keyboard = Markup.inlineKeyboard([
+      [
+        Markup.button.callback('🔄 Use Default', 'repo:use_default')
+      ],
+      [
+        Markup.button.callback('ℹ️ How to Set Custom', 'repo:help')
+      ]
+    ]);
+
+    const message = `
+📦 *Repository Configuration*
+
+*Current Repository:*
+\`${currentRepo}\`
+
+*Default Repository:*
+\`${defaultOwner}/${defaultRepo}\`
+
+*To set a custom repository:*
+\`/repos set owner/repo\`
+
+*Examples:*
+\`/repos set facebook/react\`
+\`/repos set vercel/next.js\`
+
+Select an option below:
+    `.trim();
+
+    await ctx.reply(message, {
+      parse_mode: 'Markdown',
+      ...keyboard
+    });
+
+  } catch (err) {
+    logger.error('REPOS_COMMAND_ERROR', {
+      userId,
+      error: err.message
+    });
+    await ctx.reply('❌ Failed to get repository info: ' + err.message);
+  }
 }
 
 /**
@@ -376,6 +456,53 @@ export async function handleTelegramCallback(ctx) {
       // TODO: Save agent preference
       await ctx.answerCbQuery();
       await ctx.reply(`✅ Agent role set to: ${agentRole}`);
+    } else if (callbackData === 'repo:use_default') {
+      // Clear user's custom repo preference, revert to environment default
+      const { getDatabase } = await import('../database/db.js');
+      const db = getDatabase();
+
+      db.prepare(`DELETE FROM user_preferences WHERE user_id = ?`).run(String(userId));
+
+      const defaultOwner = process.env.GITHUB_OWNER || 'Not set';
+      const defaultRepo = process.env.GITHUB_REPO || 'Not set';
+
+      await ctx.answerCbQuery();
+      await ctx.reply(
+        `✅ *Switched to Default Repository*\n\n` +
+        `Now using: \`${defaultOwner}/${defaultRepo}\`\n\n` +
+        `All future tasks will use this repository.`,
+        { parse_mode: 'Markdown' }
+      );
+
+      logger.info('REPO_RESET', { userId, defaultOwner, defaultRepo });
+    } else if (callbackData === 'repo:help') {
+      // Show detailed help message about repository configuration
+      const helpMessage = `
+📚 *How to Set Custom Repository*
+
+You can configure which GitHub repository MAX works on using the \`/repos set\` command.
+
+*Syntax:*
+\`/repos set owner/repo\`
+
+*Examples:*
+• \`/repos set facebook/react\`
+• \`/repos set vercel/next.js\`
+• \`/repos set your-username/your-project\`
+
+*Notes:*
+• Your custom repository persists across sessions
+• You can switch back to default anytime using the "Use Default" button
+• Each user can have their own repository preference
+
+*Current Default:*
+${process.env.GITHUB_OWNER || 'Not set'}/${process.env.GITHUB_REPO || 'Not set'}
+
+Use \`/repos\` to see your current configuration.
+      `.trim();
+
+      await ctx.answerCbQuery();
+      await ctx.reply(helpMessage, { parse_mode: 'Markdown' });
     }
   } catch (err) {
     logger.error('TG_CALLBACK_ERROR', {
