@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "init-db": "node src/database/init-db.js"
+    "init-db": "node src/database/init-db.js",
+    "db:reset": "node scripts/reset-db.js"
   },
   "keywords": [
     "telegram",

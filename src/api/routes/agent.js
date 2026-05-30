@@ -4,6 +4,8 @@
 
 import { Router } from 'express';
 import { getDatabase } from '../../database/db.js';
+import { getOrCreateSession } from '../../database/queries.js';
+import { executeAgentLoop } from '../../agent/loop.js';
 import logger from '../../utils/logger.js';
 import { authenticate } from '../middleware/auth.js';
 
@@ -13,56 +15,45 @@ const router = Router();
 
 /**
  * POST /api/agent/task
- * Trigger agent execution for a task
+ * Trigger agent execution for a task (Web/API endpoint)
  */
 router.post('/task', authenticate, async (req, res) => {
   try {
-    const { sessionId, task, userId } = req.body;
+    const { task, sessionId, userId } = req.body;
 
     if (!task) {
       return res.status(400).json({ error: 'Task is required' });
     }
 
-    if (!sessionId) {
-      return res.status(400).json({ error: 'SessionId is required' });
-    }
+    // Get or create session atomically
+    const actualSessionId = sessionId || getOrCreateSession(
+      String(userId || req.user?.id || 'api_user'),
+      'api'
+    );
 
-    // Verify session exists or create it
-    let session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId);
+    logger.info('Agent task triggered via API', {
+      sessionId: actualSessionId,
+      userId,
+      task: task.substring(0, 100)
+    });
 
-    if (!session) {
-      const now = new Date().toISOString();
-      db.prepare(`
-        INSERT INTO sessions (id, user_id, platform, created_at, last_activity)
-        VALUES (?, ?, 'web', ?, ?)
-      `).run(sessionId, userId || 'web_user', now, now);
-
-      session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId);
-    }
-
-    logger.info('Agent task triggered', { sessionId, task: task.substring(0, 100) });
-
-    // Execute agent asynchronously
-    if (global.agentExecutor) {
-      setImmediate(() => {
-        global.agentExecutor(sessionId, task).catch(err => {
-          logger.error('Agent execution failed', {
-            sessionId,
-            error: err.message
-          });
+    // Execute agent loop asynchronously
+    setImmediate(() => {
+      executeAgentLoop(task, actualSessionId, null, userId).catch(err => {
+        logger.error('Agent execution failed', {
+          sessionId: actualSessionId,
+          error: err.message
         });
       });
+    });
 
-      res.json({
-        success: true,
-        message: 'Agent execution started',
-        sessionId
-      });
-    } else {
-      res.status(503).json({
-        error: 'Agent executor not available'
-      });
-    }
+    res.json({
+      success: true,
+      message: 'Agent execution started',
+      sessionId: actualSessionId,
+      taskId: actualSessionId
+    });
+
   } catch (error) {
     logger.error('Failed to trigger agent task', { error: error.message });
     res.status(500).json({ error: 'Failed to trigger agent task' });
@@ -71,7 +62,7 @@ router.post('/task', authenticate, async (req, res) => {
 
 /**
  * GET /api/agent/status/:sessionId
- * Get current agent status for a session
+ * Get current agent status for a session with recent messages
  */
 router.get('/status/:sessionId', authenticate, async (req, res) => {
   try {
@@ -85,12 +76,22 @@ router.get('/status/:sessionId', authenticate, async (req, res) => {
       LIMIT 1
     `).get(sessionId);
 
+    // Get recent messages
+    const messages = db.prepare(`
+      SELECT role, content, timestamp
+      FROM messages
+      WHERE session_id = ?
+      ORDER BY timestamp DESC
+      LIMIT 10
+    `).all(sessionId);
+
     if (!latestRun) {
       return res.json({
         success: true,
         status: 'idle',
         currentPhase: null,
-        agentRun: null
+        agentRun: null,
+        messages: messages.reverse()
       });
     }
 
@@ -108,7 +109,8 @@ router.get('/status/:sessionId', authenticate, async (req, res) => {
       success: true,
       status,
       currentPhase: latestRun.phase,
-      agentRun: latestRun
+      agentRun: latestRun,
+      messages: messages.reverse()
     });
   } catch (error) {
     logger.error('Failed to get agent status', {
@@ -202,41 +204,32 @@ router.post('/cli-task', async (req, res) => {
       return res.status(400).json({ error: 'Task is required' });
     }
 
-    // Create new session for CLI task
-    const sessionId = `cli_${Date.now()}`;
-    const now = new Date().toISOString();
-
-    db.prepare(`
-      INSERT INTO sessions (id, user_id, platform, created_at, last_activity)
-      VALUES (?, ?, 'cli', ?, ?)
-    `).run(sessionId, userId, now, now);
+    // Get or create session atomically - FIXED: Use getOrCreateSession
+    const sessionId = getOrCreateSession(String(userId), 'cli');
 
     logger.info('CLI task submitted', {
       sessionId,
+      userId,
       task: task.substring(0, 100)
     });
 
-    // Execute agent asynchronously
-    if (global.agentExecutor) {
-      setImmediate(() => {
-        global.agentExecutor(sessionId, task).catch(err => {
-          logger.error('CLI agent execution failed', {
-            sessionId,
-            error: err.message
-          });
+    // Execute agent loop asynchronously
+    setImmediate(() => {
+      executeAgentLoop(task, sessionId, null, userId).catch(err => {
+        logger.error('CLI agent execution failed', {
+          sessionId,
+          error: err.message
         });
       });
+    });
 
-      res.json({
-        success: true,
-        message: 'Task started. Use max-cli subscribe to watch progress.',
-        sessionId
-      });
-    } else {
-      res.status(503).json({
-        error: 'Agent executor not available'
-      });
-    }
+    res.json({
+      success: true,
+      message: 'Task started. Use max-cli subscribe to watch progress.',
+      sessionId,
+      taskId: sessionId
+    });
+
   } catch (error) {
     logger.error('Failed to submit CLI task', { error: error.message });
     res.status(500).json({ error: 'Failed to submit CLI task' });

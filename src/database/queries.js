@@ -544,58 +544,86 @@ export function getAuditHistory(filters = {}) {
 
 /**
  * Get or create session atomically with transaction
- * Closes any existing active sessions for the user
- * @param {string} userId - User ID
- * @param {Object} metadata - Session metadata (platform, task, etc.)
- * @returns {number} - Session ID
+ * Closes any existing active sessions for the user and creates new one with UUID
+ * @param {string} userId - User ID (converted to string)
+ * @param {string} platform - Platform ('telegram', 'web', 'cli')
+ * @returns {string} - Session ID (UUID)
  */
-export function getOrCreateSession(userId, metadata = {}) {
+export function getOrCreateSession(userId, platform = 'telegram') {
   if (!userId) {
     throw new Error('userId is required for session creation');
   }
 
-  const db = getDatabase();
+  // Ensure userId is a string
+  const userIdStr = String(userId);
 
-  return db.transaction(() => {
-    // Close any existing active sessions
-    const closeStmt = db.prepare(`
-      UPDATE sessions
-      SET status = 'inactive', updated_at = CURRENT_TIMESTAMP
-      WHERE user_id = ? AND status = 'active'
-    `);
-    const closeResult = closeStmt.run(userId);
+  try {
+    const db = getDatabase();
 
-    if (closeResult.changes > 0) {
-      logger.info('Closed previous active sessions', {
-        userId,
-        count: closeResult.changes
+    return db.transaction(() => {
+      // Check for existing active session
+      const existingStmt = db.prepare(`
+        SELECT id FROM sessions
+        WHERE user_id = ? AND platform = ? AND status = 'active'
+        ORDER BY created_at DESC
+        LIMIT 1
+      `);
+      const existing = existingStmt.get(userIdStr, platform);
+
+      if (existing) {
+        logger.info('Reusing existing active session', {
+          sessionId: existing.id,
+          userId: userIdStr,
+          platform
+        });
+        return existing.id;
+      }
+
+      // Close any existing active sessions for this user + platform
+      const closeStmt = db.prepare(`
+        UPDATE sessions
+        SET status = 'inactive', last_activity = CURRENT_TIMESTAMP
+        WHERE user_id = ? AND platform = ? AND status = 'active'
+      `);
+      const closeResult = closeStmt.run(userIdStr, platform);
+
+      if (closeResult.changes > 0) {
+        logger.info('Closed previous active sessions', {
+          userId: userIdStr,
+          platform,
+          count: closeResult.changes
+        });
+      }
+
+      // Generate new UUID session ID using crypto.randomUUID()
+      const sessionId = crypto.randomUUID();
+
+      // Create new session with UUID
+      const createStmt = db.prepare(`
+        INSERT INTO sessions (id, user_id, platform, status, created_at, last_activity)
+        VALUES (?, ?, ?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `);
+
+      createStmt.run(sessionId, userIdStr, platform);
+
+      logger.info('Created new session with UUID', {
+        sessionId,
+        userId: userIdStr,
+        platform,
+        closedPrevious: closeResult.changes > 0
       });
-    }
 
-    // Create new session
-    const createStmt = db.prepare(`
-      INSERT INTO sessions (user_id, status, metadata, created_at, updated_at)
-      VALUES (?, 'active', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `);
-
-    const metadataJson = JSON.stringify({
-      platform: metadata.platform || 'telegram',
-      taskDescription: metadata.task?.substring(0, 200),
-      timestamp: new Date().toISOString(),
-      ...metadata
+      return sessionId;
+    })();
+  } catch (error) {
+    logger.error('Failed to get or create session', {
+      userId: userIdStr,
+      platform,
+      error: error.message,
+      stack: error.stack
     });
-
-    const result = createStmt.run(userId, metadataJson);
-
-    logger.info('Created session atomically', {
-      sessionId: result.lastInsertRowid,
-      userId,
-      metadata: metadataJson,
-      closedPrevious: closeResult.changes > 0
-    });
-
-    return result.lastInsertRowid;
-  })();
+    throw error;
+  }
 }
 
 /**

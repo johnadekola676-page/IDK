@@ -104,15 +104,10 @@ export async function handleTask(ctx) {
     await ensureSandbox();
 
     // Close stale sessions first
-    closeStaleSessionsForUser(userId);
+    closeStaleSessionsForUser(String(userId));
 
-    // Create session atomically
-    const sessionId = getOrCreateSession(userId, {
-      platform: 'telegram',
-      task: taskDescription,
-      username: ctx.from.username,
-      chatId: ctx.chat.id
-    });
+    // Create session atomically - FIXED: Pass userId as string and platform separately
+    const sessionId = getOrCreateSession(String(userId), 'telegram');
 
     // Validate session before execution
     const session = validateSession(sessionId);
@@ -665,12 +660,11 @@ export async function handleUnknown(ctx) {
     // Ensure sandbox is ready
     await ensureSandbox();
 
-    // CRITICAL: Create or get session BEFORE any database operations
-    let session = getActiveSession(userId);
-    if (!session) {
-      const sessionId = createSession(userId);
-      session = { id: sessionId };
-    }
+    // Close stale sessions first
+    closeStaleSessionsForUser(String(userId));
+
+    // CRITICAL: Create or get session atomically - FIXED: Use getOrCreateSession
+    const sessionId = getOrCreateSession(String(userId), 'telegram');
 
     // Send initial status
     const statusMessage = await ctx.reply('🤖 Processing your request...\n\nPhase: Planning');
@@ -709,7 +703,7 @@ export async function handleUnknown(ctx) {
 
     // Execute agent loop with natural language input
     logger.info('Executing agent loop for natural language input', { text, userId });
-    const results = await executeAgentLoop(text, session.id, progressCallback);
+    const results = await executeAgentLoop(text, sessionId, progressCallback);
 
     // Format and send results (same as /task command)
     let formattedResults;

@@ -30,10 +30,13 @@ export function initDatabase() {
 
     logger.info(`Initializing database at ${dbPath}`);
 
-    // Initialize database with optimized pragmas for 1GB RAM
+    // Initialize database connection
     db = new Database(dbPath);
 
-    // Enable WAL mode for better concurrency
+    // CRITICAL: Enable foreign keys FIRST, before ANY other operation
+    db.pragma('foreign_keys = ON');
+
+    // Set optimized pragmas for performance (WAL mode for better concurrency)
     db.pragma('journal_mode = WAL');
 
     // Set cache size to 16MB (negative value = KB)
@@ -42,16 +45,21 @@ export function initDatabase() {
     // Store temp tables in memory
     db.pragma('temp_store = MEMORY');
 
-    // Full durability for data integrity
-    db.pragma('synchronous = FULL');
+    // Synchronous mode for balance between durability and performance
+    db.pragma('synchronous = NORMAL');
 
-    // Memory-mapped I/O (512MB for 1GB RAM system)
-    db.pragma('mmap_size = 536870912');
+    logger.info('Database pragmas configured', {
+      foreign_keys: db.pragma('foreign_keys', { simple: true }),
+      journal_mode: db.pragma('journal_mode', { simple: true }),
+      cache_size: db.pragma('cache_size', { simple: true })
+    });
 
     // Read and execute schema
     const schemaPath = join(__dirname, 'schema.sql');
     const schema = readFileSync(schemaPath, 'utf-8');
     db.exec(schema);
+
+    logger.info('Schema applied successfully');
 
     // Run migrations to update existing databases
     runMigrations(db);
