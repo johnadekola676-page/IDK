@@ -89,10 +89,11 @@ async function verifyEnvironment(filesModified) {
  * @returns {Promise<Object>} Final result
  */
 export async function executeAgentLoop(task, sessionId, progressCallback = null, userId = null) {
-  logger.info('Starting agent loop', { task, sessionId });
+  try {
+    logger.info('Starting agent loop', { task, sessionId });
 
-  // V2: Initialize token budget manager
-  const budgetManager = new TokenBudgetManager();
+    // V2: Initialize token budget manager
+    const budgetManager = new TokenBudgetManager();
 
   // V4: Initialize Cognitive Reflection Loop
   const cognitiveLoop = new CognitiveReflectionLoop(
@@ -152,40 +153,45 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
     budgetManager.currentOutput = pendingHandoff.token_usage_output || 0;
   }
 
-  const results = {
-    plan: null,
-    execute: null,
-    test: null,
-    deploy: null,
-    monitor: null,
-    retryCount: 0,
-    success: false,
-    budgetUsage: null // V2: Track budget
-  };
+    const results = {
+      plan: null,
+      execute: null,
+      test: null,
+      deploy: null,
+      monitor: null,
+      retryCount: 0,
+      success: false,
+      budgetUsage: null // V2: Track budget
+    };
 
-  try {
     // Add user message to context
     await addToContext(sessionId, 'user', task);
 
     // PHASE 1: PLAN
-    await reportProgress('plan', 'running', progressCallback, sessionId);
-    const planRunId = createAgentRun(sessionId, 'plan');
+    try {
+      await reportProgress('plan', 'running', progressCallback, sessionId);
+      const planRunId = createAgentRun(sessionId, 'plan');
 
-    results.plan = await executePlanPhase(task, budgetManager);
+      results.plan = await executePlanPhase(task, budgetManager);
 
-    if (!results.plan.success) {
-      updateAgentRun(planRunId, 'failed', results.plan.error);
-      await reportProgress('plan', 'failed', progressCallback, sessionId, results.plan);
-      return results;
+      if (!results.plan.success) {
+        updateAgentRun(planRunId, 'failed', results.plan.error);
+        await reportProgress('plan', 'failed', progressCallback, sessionId, results.plan);
+        return results;
+      }
+
+      updateAgentRun(planRunId, 'success');
+      await reportProgress('plan', 'success', progressCallback, sessionId, results.plan);
+
+      // V2: Write phase note to Obsidian (fire-and-forget)
+      writePhaseNote(sessionId, 'plan', results.plan).catch(err =>
+        logger.warn('Failed to write plan phase note', { error: err.message })
+      );
+    } catch (error) {
+      console.error('Plan phase error:', error.message, error.stack);
+      logger.error('Plan phase failed', { error: error.message, stack: error.stack });
+      throw error;
     }
-
-    updateAgentRun(planRunId, 'success');
-    await reportProgress('plan', 'success', progressCallback, sessionId, results.plan);
-
-    // V2: Write phase note to Obsidian (fire-and-forget)
-    writePhaseNote(sessionId, 'plan', results.plan).catch(err =>
-      logger.warn('Failed to write plan phase note', { error: err.message })
-    );
 
     // Self-healing loop for EXECUTE and TEST phases
     let healingAttempt = 0;
@@ -216,109 +222,121 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
       }
 
       // PHASE 2: EXECUTE
-      logger.info(`Agent phase: execute (attempt ${healingAttempt + 1}/${MAX_RETRY_COUNT})`);
+      try {
+        logger.info(`Agent phase: execute (attempt ${healingAttempt + 1}/${MAX_RETRY_COUNT})`);
 
-      // Verify environment before execution
-      const envReady = await verifyEnvironment(results.plan?.filesModified || []);
-      if (!envReady) {
-        logger.error('Environment verification failed');
-        lastError = 'Environment verification failed - missing dependencies';
-        healingAttempt++;
-        continue;
-      }
-
-      await reportProgress('execute', 'running', progressCallback, sessionId, { attempt: healingAttempt + 1 });
-      const executeRunId = createAgentRun(sessionId, 'execute', { attempt: healingAttempt + 1 });
-
-      results.execute = await executeExecutePhase(
-        results.plan.plan,
-        task,
-        { attempt: healingAttempt, budgetManager }
-      );
-
-      if (!results.execute.success) {
-        updateAgentRun(executeRunId, 'failed', results.execute.error, healingAttempt);
-        lastError = results.execute.error;
-
-        // Check if error is recoverable
-        if (!isRecoverableError(results.execute.error)) {
-          logger.error('Non-recoverable error detected, halting retry loop', {
-            error: results.execute.error,
-            attempt: healingAttempt
-          });
-          break; // Exit retry loop
+        // Verify environment before execution
+        const envReady = await verifyEnvironment(results.plan?.filesModified || []);
+        if (!envReady) {
+          logger.error('Environment verification failed');
+          lastError = 'Environment verification failed - missing dependencies';
+          healingAttempt++;
+          continue;
         }
 
-        // Apply exponential backoff BEFORE retry
-        const backoffMs = Math.min(2000 * Math.pow(2, healingAttempt), 30000);
-        logger.info('Backing off before execute retry', { backoffMs, attempt: healingAttempt });
-        await new Promise(resolve => setTimeout(resolve, backoffMs));
+        await reportProgress('execute', 'running', progressCallback, sessionId, { attempt: healingAttempt + 1 });
+        const executeRunId = createAgentRun(sessionId, 'execute', { attempt: healingAttempt + 1 });
 
-        healingAttempt++;
-        continue;
+        results.execute = await executeExecutePhase(
+          results.plan.plan,
+          task,
+          { attempt: healingAttempt, budgetManager }
+        );
+
+        if (!results.execute.success) {
+          updateAgentRun(executeRunId, 'failed', results.execute.error, healingAttempt);
+          lastError = results.execute.error;
+
+          // Check if error is recoverable
+          if (!isRecoverableError(results.execute.error)) {
+            logger.error('Non-recoverable error detected, halting retry loop', {
+              error: results.execute.error,
+              attempt: healingAttempt
+            });
+            break; // Exit retry loop
+          }
+
+          // Apply exponential backoff BEFORE retry
+          const backoffMs = Math.min(2000 * Math.pow(2, healingAttempt), 30000);
+          logger.info('Backing off before execute retry', { backoffMs, attempt: healingAttempt });
+          await new Promise(resolve => setTimeout(resolve, backoffMs));
+
+          healingAttempt++;
+          continue;
+        }
+
+        updateAgentRun(executeRunId, 'success', null, healingAttempt);
+        await reportProgress('execute', 'success', progressCallback, sessionId, results.execute);
+
+        // V2: Write phase note to Obsidian (fire-and-forget)
+        writePhaseNote(sessionId, 'execute', results.execute).catch(err =>
+          logger.warn('Failed to write execute phase note', { error: err.message })
+        );
+      } catch (error) {
+        console.error('Execute phase error:', error.message, error.stack);
+        logger.error('Execute phase failed', { error: error.message, stack: error.stack });
+        throw error;
       }
-
-      updateAgentRun(executeRunId, 'success', null, healingAttempt);
-      await reportProgress('execute', 'success', progressCallback, sessionId, results.execute);
-
-      // V2: Write phase note to Obsidian (fire-and-forget)
-      writePhaseNote(sessionId, 'execute', results.execute).catch(err =>
-        logger.warn('Failed to write execute phase note', { error: err.message })
-      );
 
       // PHASE 3: TEST
-      await reportProgress('test', 'running', progressCallback, sessionId);
-      const testRunId = createAgentRun(sessionId, 'test');
+      try {
+        await reportProgress('test', 'running', progressCallback, sessionId);
+        const testRunId = createAgentRun(sessionId, 'test');
 
-      results.test = await executeTestPhase(results.execute);
+        results.test = await executeTestPhase(results.execute);
 
-      if (!results.test.success && !results.test.skipped) {
-        updateAgentRun(testRunId, 'failed', results.test.error, healingAttempt);
-        await reportProgress('test', 'failed', progressCallback, sessionId, results.test);
+        if (!results.test.success && !results.test.skipped) {
+          updateAgentRun(testRunId, 'failed', results.test.error, healingAttempt);
+          await reportProgress('test', 'failed', progressCallback, sessionId, results.test);
 
-        // Enter self-healing mode
-        logger.info('Entering self-healing mode', {
-          attempt: healingAttempt + 1,
-          maxRetries: MAX_RETRY_COUNT
-        });
-
-        if (healingAttempt < MAX_RETRY_COUNT - 1) {
-          // V2: Pass budgetManager to healSelf
-          await healSelf(results, task, healingAttempt, budgetManager);
-          healingAttempt++;
-          results.retryCount = healingAttempt;
-          await reportProgress('healing', 'running', progressCallback, sessionId, {
-            attempt: healingAttempt,
+          // Enter self-healing mode
+          logger.info('Entering self-healing mode', {
+            attempt: healingAttempt + 1,
             maxRetries: MAX_RETRY_COUNT
           });
-          continue;
-        } else {
-          logger.error('Max retries reached', { retryCount: healingAttempt });
-          return results;
+
+          if (healingAttempt < MAX_RETRY_COUNT - 1) {
+            // V2: Pass budgetManager to healSelf
+            await healSelf(results, task, healingAttempt, budgetManager);
+            healingAttempt++;
+            results.retryCount = healingAttempt;
+            await reportProgress('healing', 'running', progressCallback, sessionId, {
+              attempt: healingAttempt,
+              maxRetries: MAX_RETRY_COUNT
+            });
+            continue;
+          } else {
+            logger.error('Max retries reached', { retryCount: healingAttempt });
+            return results;
+          }
         }
-      }
 
-      updateAgentRun(testRunId, 'success', null, healingAttempt);
-      await reportProgress('test', 'success', progressCallback, sessionId, results.test);
+        updateAgentRun(testRunId, 'success', null, healingAttempt);
+        await reportProgress('test', 'success', progressCallback, sessionId, results.test);
 
-      // V2: Learn from successful error fix
-      if (results._pendingErrorLearning && process.env.ERROR_LEARNING_ENABLED !== 'false') {
-        const { errorSig, errorMessage, fixDescription } = results._pendingErrorLearning;
-        try {
-          await learnFromSuccess(errorMessage, fixDescription);
-          logger.info('Learned from successful error fix', { errorSig });
-          delete results._pendingErrorLearning;
-        } catch (error) {
-          logger.warn('Failed to learn from success', { error: error.message });
+        // V2: Learn from successful error fix
+        if (results._pendingErrorLearning && process.env.ERROR_LEARNING_ENABLED !== 'false') {
+          const { errorSig, errorMessage, fixDescription } = results._pendingErrorLearning;
+          try {
+            await learnFromSuccess(errorMessage, fixDescription);
+            logger.info('Learned from successful error fix', { errorSig });
+            delete results._pendingErrorLearning;
+          } catch (error) {
+            logger.warn('Failed to learn from success', { error: error.message });
+          }
         }
+
+        // V2: Write phase note to Obsidian (fire-and-forget)
+        writePhaseNote(sessionId, 'test', results.test).catch(err =>
+          logger.warn('Failed to write test phase note', { error: err.message })
+        );
+
+        executeSuccess = true;
+      } catch (error) {
+        console.error('Test phase error:', error.message, error.stack);
+        logger.error('Test phase failed', { error: error.message, stack: error.stack });
+        throw error;
       }
-
-      // V2: Write phase note to Obsidian (fire-and-forget)
-      writePhaseNote(sessionId, 'test', results.test).catch(err =>
-        logger.warn('Failed to write test phase note', { error: err.message })
-      );
-
-      executeSuccess = true;
     }
 
     if (!executeSuccess) {
@@ -359,47 +377,59 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
     }
 
     // PHASE 4: DEPLOY
-    await reportProgress('deploy', 'running', progressCallback, sessionId);
-    const deployRunId = createAgentRun(sessionId, 'deploy');
+    try {
+      await reportProgress('deploy', 'running', progressCallback, sessionId);
+      const deployRunId = createAgentRun(sessionId, 'deploy');
 
-    results.deploy = await executeDeployPhase(results.execute, results.test, { budgetManager, userId, sessionId });
+      results.deploy = await executeDeployPhase(results.execute, results.test, { budgetManager, userId, sessionId });
 
-    if (!results.deploy.success) {
-      updateAgentRun(deployRunId, 'failed', results.deploy.error);
-      await reportProgress('deploy', 'failed', progressCallback, sessionId, results.deploy);
-      return results;
+      if (!results.deploy.success) {
+        updateAgentRun(deployRunId, 'failed', results.deploy.error);
+        await reportProgress('deploy', 'failed', progressCallback, sessionId, results.deploy);
+        return results;
+      }
+
+      updateAgentRun(deployRunId, 'success');
+      await reportProgress('deploy', 'success', progressCallback, sessionId, results.deploy);
+
+      // V2: Write phase note to Obsidian (fire-and-forget)
+      writePhaseNote(sessionId, 'deploy', results.deploy).catch(err =>
+        logger.warn('Failed to write deploy phase note', { error: err.message })
+      );
+    } catch (error) {
+      console.error('Deploy phase error:', error.message, error.stack);
+      logger.error('Deploy phase failed', { error: error.message, stack: error.stack });
+      throw error;
     }
-
-    updateAgentRun(deployRunId, 'success');
-    await reportProgress('deploy', 'success', progressCallback, sessionId, results.deploy);
-
-    // V2: Write phase note to Obsidian (fire-and-forget)
-    writePhaseNote(sessionId, 'deploy', results.deploy).catch(err =>
-      logger.warn('Failed to write deploy phase note', { error: err.message })
-    );
 
     // PHASE 5: MONITOR
-    await reportProgress('monitor', 'running', progressCallback, sessionId);
-    const monitorRunId = createAgentRun(sessionId, 'monitor');
+    try {
+      await reportProgress('monitor', 'running', progressCallback, sessionId);
+      const monitorRunId = createAgentRun(sessionId, 'monitor');
 
-    results.monitor = await executeMonitorPhase(results.deploy, {
-      timeoutMs: 300000, // 5 minutes
-      pollIntervalMs: 20000 // 20 seconds
-    });
+      results.monitor = await executeMonitorPhase(results.deploy, {
+        timeoutMs: 300000, // 5 minutes
+        pollIntervalMs: 20000 // 20 seconds
+      });
 
-    if (!results.monitor.success && !results.monitor.skipped) {
-      updateAgentRun(monitorRunId, 'failed', results.monitor.error);
-      await reportProgress('monitor', 'failed', progressCallback, sessionId, results.monitor);
-      return results;
+      if (!results.monitor.success && !results.monitor.skipped) {
+        updateAgentRun(monitorRunId, 'failed', results.monitor.error);
+        await reportProgress('monitor', 'failed', progressCallback, sessionId, results.monitor);
+        return results;
+      }
+
+      updateAgentRun(monitorRunId, 'success');
+      await reportProgress('monitor', 'success', progressCallback, sessionId, results.monitor);
+
+      // V2: Write phase note to Obsidian (fire-and-forget)
+      writePhaseNote(sessionId, 'monitor', results.monitor).catch(err =>
+        logger.warn('Failed to write monitor phase note', { error: err.message })
+      );
+    } catch (error) {
+      console.error('Monitor phase error:', error.message, error.stack);
+      logger.error('Monitor phase failed', { error: error.message, stack: error.stack });
+      throw error;
     }
-
-    updateAgentRun(monitorRunId, 'success');
-    await reportProgress('monitor', 'success', progressCallback, sessionId, results.monitor);
-
-    // V2: Write phase note to Obsidian (fire-and-forget)
-    writePhaseNote(sessionId, 'monitor', results.monitor).catch(err =>
-      logger.warn('Failed to write monitor phase note', { error: err.message })
-    );
 
     // Overall success
     results.success = true;
@@ -472,14 +502,9 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
 
     return results;
   } catch (error) {
-    logger.error('Agent loop failed', { error: error.message, sessionId });
-    results.error = error.message;
-    await reportProgress('error', 'failed', progressCallback, sessionId, { error: error.message });
-    // Cleanup to prevent memory leak
-    if (results._pendingErrorLearning) {
-      delete results._pendingErrorLearning;
-    }
-    return results;
+    console.error('Agent loop error:', error.message, error.stack);
+    logger.error('Agent loop failed', { error: error.message, sessionId, stack: error.stack });
+    throw error;
   }
 }
 

@@ -672,100 +672,12 @@ export async function handleUnknown(ctx) {
     return;
   }
 
-  // Otherwise, treat as natural language task request
-  const validation = validateUserInput(text);
-  if (!validation.valid) {
-    await ctx.reply(`❌ Invalid input: ${validation.reason}`);
-    return;
-  }
-
-  const userId = ctx.from.id;
-
-  try {
-    // Ensure sandbox is ready
-    await ensureSandbox();
-
-    // Close stale sessions first
-    closeStaleSessionsForUser(String(userId));
-
-    // CRITICAL: Create or get session atomically - FIXED: Use getOrCreateSession
-    const sessionId = getOrCreateSession(String(userId), 'telegram');
-
-    // Send initial status
-    const statusMessage = await ctx.reply('🤖 Processing your request...\n\nPhase: Planning');
-    let lastPhase = 'plan';
-
-    // Progress callback
-    const progressCallback = async (progress) => {
-      const { phase, status, attempt } = progress;
-
-      let emoji = '⏳';
-      if (status === 'success') emoji = '✓';
-      if (status === 'failed') emoji = '✗';
-
-      let text = `${emoji} <b>Phase: ${phase.toUpperCase()}</b> - ${status}`;
-
-      if (attempt) {
-        text += `\n🔄 Self-healing attempt ${attempt}/${process.env.MAX_RETRY_COUNT || 10}`;
-      }
-
-      // Only update if phase changed
-      if (phase !== lastPhase || status === 'success' || status === 'failed') {
-        try {
-          await ctx.telegram.editMessageText(
-            statusMessage.chat.id,
-            statusMessage.message_id,
-            null,
-            text,
-            { parse_mode: 'HTML' }
-          );
-          lastPhase = phase;
-        } catch (error) {
-          // Ignore edit errors (message too old, etc.)
-        }
-      }
-    };
-
-    // Execute agent loop with natural language input
-    logger.info('Executing agent loop for natural language input', { text, userId });
-    const results = await executeAgentLoop(text, sessionId, progressCallback);
-
-    // Format and send results (same as /task command)
-    let formattedResults;
-    if (results.usedSOP && results.worksheetPath) {
-      formattedResults = formatSOPSummary(results.worksheetPath, results);
-    } else {
-      formattedResults = formatLoopResults(results);
-    }
-    await ctx.reply(formatMessage(formattedResults), { parse_mode: 'HTML' });
-
-    // Send detailed error if failed
-    if (!results.success) {
-      let errorDetails = '❌ Error Details:\n\n';
-
-      if (results.test && !results.test.success && !results.test.skipped) {
-        const errorMsg = results.test.stderr?.substring(0, 500) || 'Unknown error';
-        errorDetails += `Test failed:\n${errorMsg}`;
-      } else if (results.error) {
-        errorDetails += results.error.substring(0, 500);
-      } else {
-        errorDetails += 'No error details available';
-      }
-
-      await ctx.reply(errorDetails);
-    }
-
-    // Send workflow link if available
-    if (results.monitor && results.monitor.workflow) {
-      await ctx.reply(
-        `🔗 <a href="${results.monitor.workflow.htmlUrl}">View workflow run</a>`,
-        { parse_mode: 'HTML' }
-      );
-    }
-  } catch (error) {
-    logger.error('Natural language processing failed', { error: error.message, userId });
-    await ctx.reply(`❌ Failed to process: ${sanitizeForTelegram(error.message)}`);
-  }
+  // For any other normal message (not a casual greeting), provide helpful guidance
+  await ctx.reply(
+    '💡 Hey! To run a task use /task followed by your description.\n' +
+    'Type /help for all available commands.',
+    { parse_mode: 'HTML' }
+  );
 }
 
 export default {
