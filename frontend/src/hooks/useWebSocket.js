@@ -15,12 +15,14 @@ export function useWebSocket(sessionId) {
   const socketRef = useRef(null);
 
   useEffect(() => {
-    // Initialize socket connection
+    // Initialize socket connection with improved reconnection logic
     const socket = io(WS_URL, {
-      transports: ['websocket', 'polling'],
-      reconnection: true,
-      reconnectionDelay: 1000,
-      reconnectionAttempts: 10
+      transports: ['websocket', 'polling'],  // Allow fallback to polling
+      reconnection: true,                    // Enable automatic reconnection
+      reconnectionDelay: 2000,               // Wait 2 seconds before first reconnect attempt
+      reconnectionDelayMax: 5000,            // Max 5 seconds between reconnection attempts
+      reconnectionAttempts: Infinity,        // Keep trying indefinitely
+      timeout: 20000                         // Connection timeout
     });
 
     socketRef.current = socket;
@@ -36,9 +38,35 @@ export function useWebSocket(sessionId) {
       }
     });
 
-    socket.on('disconnect', () => {
-      console.log('WebSocket disconnected');
+    socket.on('disconnect', (reason) => {
+      console.log('WebSocket disconnected:', reason);
       setConnected(false);
+
+      // If server initiated disconnect, manually reconnect after 2 seconds
+      if (reason === 'io server disconnect') {
+        setTimeout(() => {
+          socket.connect();
+        }, 2000);
+      }
+      // For other reasons (transport close, ping timeout, etc.), socket.io handles auto-reconnect
+    });
+
+    // Reconnection event handlers
+    socket.on('reconnect_attempt', () => {
+      console.log('Attempting to reconnect...');
+    });
+
+    socket.on('reconnect', (attemptNumber) => {
+      console.log('Reconnected after', attemptNumber, 'attempts');
+      setConnected(true);
+    });
+
+    socket.on('reconnect_error', (error) => {
+      console.error('Reconnection error:', error);
+    });
+
+    socket.on('reconnect_failed', () => {
+      console.error('Reconnection failed');
     });
 
     socket.on('subscribed', (data) => {
@@ -98,6 +126,7 @@ export function useWebSocket(sessionId) {
     message,
     status,
     subscribe,
-    unsubscribe
+    unsubscribe,
+    isReconnecting: !connected && socketRef.current?.active  // Track reconnection state
   };
 }

@@ -21,7 +21,7 @@ export default function SimpleChat() {
   const messagesEndRef = useRef(null);
 
   // WebSocket connection for real-time updates
-  const { connected, message: wsMessage } = useWebSocket(sessionId);
+  const { connected, message: wsMessage, isReconnecting } = useWebSocket(sessionId);
 
   // Initialize session and load saved repo on mount
   useEffect(() => {
@@ -156,6 +156,7 @@ export default function SimpleChat() {
         <div className="header-title">
           <h1>Claude Agent</h1>
           <span className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
+          {isReconnecting && <span className="status-text">Reconnecting...</span>}
         </div>
         <button className="icon-btn" onClick={() => setShowMenu(!showMenu)}>
           <Menu size={20} />

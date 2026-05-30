@@ -175,11 +175,15 @@ export class WebGateway {
   createExpressApp() {
     this.app = express();
     this.server = http.createServer(this.app);
+    // Configure Socket.IO with ping/pong heartbeat to prevent Railway transport close errors
     this.io = new SocketIO(this.server, {
       cors: {
         origin: process.env.WEB_UI_ORIGIN || '*',
         methods: ['GET', 'POST']
-      }
+      },
+      pingInterval: 15000,  // Send ping every 15 seconds to keep connection alive
+      pingTimeout: 10000,   // Wait 10 seconds for pong response before considering connection dead
+      transports: ['websocket', 'polling']  // Allow fallback to polling if WebSocket fails
     });
 
     // Middleware
