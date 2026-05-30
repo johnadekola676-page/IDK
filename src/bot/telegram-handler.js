@@ -153,95 +153,65 @@ Current Model: ${session.currentModel || 'groq-llama-70b'}
 }
 
 /**
- * /repos - List configured repositories and switch
+ * /repos - List GitHub repositories and select
  */
 async function handleReposCommand(ctx, userId, text) {
   try {
+    const { Octokit } = await import('@octokit/rest');
+    const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+
+    // Get user's current selection
     const { getDatabase } = await import('../database/db.js');
     const db = getDatabase();
-
-    // Check if user is setting a repo: /repos set owner/repo
-    const setMatch = text.match(/\/repos\s+set\s+([a-zA-Z0-9-_]+)\/([a-zA-Z0-9-_\.]+)/);
-
-    if (setMatch) {
-      const [, owner, repo] = setMatch;
-
-      // Save to database
-      db.prepare(`
-        INSERT INTO user_preferences (user_id, repo_owner, repo_name, updated_at)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET
-          repo_owner = excluded.repo_owner,
-          repo_name = excluded.repo_name,
-          updated_at = excluded.updated_at
-      `).run(String(userId), owner, repo, new Date().toISOString());
-
-      await ctx.reply(
-        `✅ *Repository Updated*\n\n` +
-        `Your tasks will now use:\n\`${owner}/${repo}\`\n\n` +
-        `Use \`/repos\` to see current configuration.`,
-        { parse_mode: 'Markdown' }
-      );
-
-      logger.info('REPO_UPDATED', { userId, owner, repo });
-      return;
-    }
-
-    // Get user's current repository preference
     const userPref = db.prepare(`
       SELECT repo_owner, repo_name
       FROM user_preferences
       WHERE user_id = ?
     `).get(String(userId));
 
-    // Get default from environment
-    const defaultOwner = process.env.GITHUB_OWNER || 'Not set';
-    const defaultRepo = process.env.GITHUB_REPO || 'Not set';
+    await ctx.reply('🔍 Fetching your repositories...');
 
-    const currentRepo = userPref
-      ? `${userPref.repo_owner}/${userPref.repo_name}`
-      : `${defaultOwner}/${defaultRepo} (default)`;
+    // Fetch user's repos from GitHub
+    const { data: repos } = await octokit.repos.listForAuthenticatedUser({
+      sort: 'updated',
+      per_page: 20
+    });
 
-    // Create inline keyboard with quick actions
-    const keyboard = Markup.inlineKeyboard([
-      [
-        Markup.button.callback('🔄 Use Default', 'repo:use_default')
-      ],
-      [
-        Markup.button.callback('ℹ️ How to Set Custom', 'repo:help')
-      ]
+    if (repos.length === 0) {
+      await ctx.reply('No repositories found.');
+      return;
+    }
+
+    // Create buttons for first 10 repos (Telegram limit)
+    const buttons = repos.slice(0, 10).map(repo => [
+      Markup.button.callback(
+        `${repo.name}${userPref && userPref.repo_name === repo.name ? ' ✓' : ''}`,
+        `repo:select:${repo.owner.login}:${repo.name}`
+      )
     ]);
 
-    const message = `
-📦 *Repository Configuration*
+    const keyboard = Markup.inlineKeyboard(buttons);
 
-*Current Repository:*
-\`${currentRepo}\`
+    const current = userPref
+      ? `\`${userPref.repo_owner}/${userPref.repo_name}\``
+      : 'None selected';
 
-*Default Repository:*
-\`${defaultOwner}/${defaultRepo}\`
-
-*To set a custom repository:*
-\`/repos set owner/repo\`
-
-*Examples:*
-\`/repos set facebook/react\`
-\`/repos set vercel/next.js\`
-
-Select an option below:
-    `.trim();
-
-    await ctx.reply(message, {
-      parse_mode: 'Markdown',
-      ...keyboard
-    });
+    await ctx.reply(
+      `📦 *Select Repository*\n\n` +
+      `Current: ${current}\n\n` +
+      `Choose a repository:`,
+      {
+        parse_mode: 'Markdown',
+        ...keyboard
+      }
+    );
 
   } catch (err) {
     logger.error('REPOS_COMMAND_ERROR', {
       userId,
       error: err.message
     });
-    await ctx.reply('❌ Failed to get repository info: ' + err.message);
+    await ctx.reply('❌ Failed to fetch repositories: ' + err.message);
   }
 }
 
@@ -456,53 +426,34 @@ export async function handleTelegramCallback(ctx) {
       // TODO: Save agent preference
       await ctx.answerCbQuery();
       await ctx.reply(`✅ Agent role set to: ${agentRole}`);
-    } else if (callbackData === 'repo:use_default') {
-      // Clear user's custom repo preference, revert to environment default
+    } else if (callbackData.startsWith('repo:select:')) {
+      // User selected a repository
+      const parts = callbackData.split(':');
+      const owner = parts[2];
+      const repo = parts[3];
+
       const { getDatabase } = await import('../database/db.js');
       const db = getDatabase();
 
-      db.prepare(`DELETE FROM user_preferences WHERE user_id = ?`).run(String(userId));
-
-      const defaultOwner = process.env.GITHUB_OWNER || 'Not set';
-      const defaultRepo = process.env.GITHUB_REPO || 'Not set';
+      // Save selection
+      db.prepare(`
+        INSERT INTO user_preferences (user_id, repo_owner, repo_name, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+          repo_owner = excluded.repo_owner,
+          repo_name = excluded.repo_name,
+          updated_at = excluded.updated_at
+      `).run(String(userId), owner, repo, new Date().toISOString());
 
       await ctx.answerCbQuery();
       await ctx.reply(
-        `✅ *Switched to Default Repository*\n\n` +
-        `Now using: \`${defaultOwner}/${defaultRepo}\`\n\n` +
-        `All future tasks will use this repository.`,
+        `✅ *Repository Selected*\n\n` +
+        `Now working on: \`${owner}/${repo}\`\n\n` +
+        `All tasks will use this repository.`,
         { parse_mode: 'Markdown' }
       );
 
-      logger.info('REPO_RESET', { userId, defaultOwner, defaultRepo });
-    } else if (callbackData === 'repo:help') {
-      // Show detailed help message about repository configuration
-      const helpMessage = `
-📚 *How to Set Custom Repository*
-
-You can configure which GitHub repository MAX works on using the \`/repos set\` command.
-
-*Syntax:*
-\`/repos set owner/repo\`
-
-*Examples:*
-• \`/repos set facebook/react\`
-• \`/repos set vercel/next.js\`
-• \`/repos set your-username/your-project\`
-
-*Notes:*
-• Your custom repository persists across sessions
-• You can switch back to default anytime using the "Use Default" button
-• Each user can have their own repository preference
-
-*Current Default:*
-${process.env.GITHUB_OWNER || 'Not set'}/${process.env.GITHUB_REPO || 'Not set'}
-
-Use \`/repos\` to see your current configuration.
-      `.trim();
-
-      await ctx.answerCbQuery();
-      await ctx.reply(helpMessage, { parse_mode: 'Markdown' });
+      logger.info('REPO_SELECTED', { userId, owner, repo });
     }
   } catch (err) {
     logger.error('TG_CALLBACK_ERROR', {
