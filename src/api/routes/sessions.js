@@ -141,6 +141,41 @@ router.post('/', authenticate, async (req, res) => {
 });
 
 /**
+ * GET /api/sessions/:sessionId/messages
+ * Get messages with optional since parameter
+ */
+router.get('/:sessionId/messages', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { since } = req.query;
+
+    const db = getDatabase();
+
+    let stmt;
+    if (since) {
+      stmt = db.prepare(`
+        SELECT * FROM messages
+        WHERE session_id = ? AND id > ?
+        ORDER BY created_at ASC
+      `);
+      const messages = stmt.all(sessionId, parseInt(since));
+      res.json(messages);
+    } else {
+      stmt = db.prepare(`
+        SELECT * FROM messages
+        WHERE session_id = ?
+        ORDER BY created_at ASC
+      `);
+      const messages = stmt.all(sessionId);
+      res.json(messages);
+    }
+  } catch (error) {
+    logger.error('Failed to fetch messages', { error: error.message });
+    res.status(500).json({ error: 'Failed to fetch messages' });
+  }
+});
+
+/**
  * DELETE /api/sessions/:id
  * Delete a session and all related data
  */

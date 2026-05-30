@@ -11,6 +11,31 @@ import './SimpleChat.css';
 
 const API_BASE = import.meta.env.VITE_API_URL || window.location.origin;
 
+/**
+ * Safely set localStorage item with quota handling
+ * @param {string} key - Storage key
+ * @param {string} value - Storage value
+ * @returns {boolean} Success status
+ */
+function safeLocalStorageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (e) {
+    if (e.name === 'QuotaExceededError') {
+      // Clear non-critical data and retry
+      localStorage.removeItem('lastMessageId');
+      try {
+        localStorage.setItem(key, value);
+        return true;
+      } catch (retryError) {
+        return false;
+      }
+    }
+    return false;
+  }
+}
+
 export default function SimpleChat() {
   const [sessionId, setSessionId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -19,9 +44,46 @@ export default function SimpleChat() {
   const [showMenu, setShowMenu] = useState(false);
   const [currentRepo, setCurrentRepo] = useState(null);
   const messagesEndRef = useRef(null);
+  const socketRef = useRef(null);
 
   // WebSocket connection for real-time updates
   const { connected, message: wsMessage, isReconnecting } = useWebSocket(sessionId);
+
+  // Calculate real viewport height on mobile (handles address bar and keyboard)
+  useEffect(() => {
+    function setVH() {
+      const vh = window.innerHeight * 0.01;
+      document.documentElement.style.setProperty('--vh', `${vh}px`);
+    }
+
+    setVH();
+    window.addEventListener('resize', setVH);
+    window.addEventListener('orientationchange', setVH);
+
+    return () => {
+      window.removeEventListener('resize', setVH);
+      window.removeEventListener('orientationchange', setVH);
+    };
+  }, []);
+
+  // Handle keyboard overlap using Visual Viewport API
+  useEffect(() => {
+    if (!window.visualViewport) return;
+
+    const handleResize = () => {
+      const viewport = window.visualViewport;
+      const offsetY = window.innerHeight - viewport.height;
+
+      // Adjust input container position when keyboard appears
+      const inputContainer = document.querySelector('.input-container');
+      if (inputContainer) {
+        inputContainer.style.transform = `translateY(-${offsetY}px)`;
+      }
+    };
+
+    window.visualViewport.addEventListener('resize', handleResize);
+    return () => window.visualViewport.removeEventListener('resize', handleResize);
+  }, []);
 
   // Initialize session and load saved repo on mount
   useEffect(() => {
@@ -54,6 +116,65 @@ export default function SimpleChat() {
   // Auto-scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // Handle page visibility changes (mobile background/foreground)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        // Fetch missed messages when page becomes visible
+        if (sessionId) {
+          fetchMissedMessages(sessionId);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [sessionId]);
+
+  /**
+   * Fetch missed messages since last received message
+   * @param {string} sessionId - Session ID to fetch messages for
+   * @returns {Promise<void>}
+   */
+  const fetchMissedMessages = async (sessionId) => {
+    try {
+      const lastMessageId = localStorage.getItem('lastMessageId');
+      const response = await fetch(`${API_BASE}/api/sessions/${sessionId}/messages${lastMessageId ? `?since=${lastMessageId}` : ''}`);
+
+      if (!response.ok) return;
+
+      const missedMessages = await response.json();
+      if (missedMessages.length > 0) {
+        setMessages(prev => [...prev, ...missedMessages]);
+
+        // Update last message ID
+        const lastMessage = missedMessages[missedMessages.length - 1];
+        if (lastMessage?.id) {
+          safeLocalStorageSet('lastMessageId', lastMessage.id);
+        }
+      }
+    } catch (error) {
+      // Failed to fetch missed messages
+    }
+  };
+
+  // Store session ID in localStorage for Service Worker access
+  useEffect(() => {
+    if (sessionId) {
+      safeLocalStorageSet('currentSessionId', sessionId);
+    }
+  }, [sessionId]);
+
+  // Update last message ID whenever messages change
+  useEffect(() => {
+    if (messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage?.id) {
+        safeLocalStorageSet('lastMessageId', lastMessage.id);
+      }
+    }
   }, [messages]);
 
   const initializeSession = async () => {

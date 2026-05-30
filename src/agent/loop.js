@@ -7,9 +7,10 @@ import { fixErrors } from '../groq/client.js';
 import { buildErrorContext } from '../groq/prompts.js';
 import { createAgentRun, updateAgentRun, getAndResumeHandoff } from '../database/queries.js';
 import { addToContext } from './context.js';
-import { readFileSafe } from '../utils/filesystem.js';
+import { readFileSafe, existsSafe } from '../utils/filesystem.js';
 import logger from '../utils/logger.js';
 import { broadcastProgress } from '../api/websocket.js';
+import { spawn } from 'child_process';
 
 // V2 Enhancements
 import TokenBudgetManager from '../groq/token-budget.js';
@@ -24,6 +25,61 @@ import { executeWithSOP, isSOPEnabled } from './sop-integration.js';
 import { CognitiveReflectionLoop } from './reflection/cognitive-loop.js';
 
 const MAX_RETRY_COUNT = parseInt(process.env.MAX_RETRY_COUNT || '10', 10);
+
+/**
+ * Check if error is recoverable via retry
+ * @param {string} error - Error message
+ * @returns {boolean} - True if error is recoverable
+ */
+function isRecoverableError(error) {
+  const nonRecoverable = [
+    'EACCES',           // Permission denied
+    'ENOENT',           // File not found (workspace issue)
+    'MODULE_NOT_FOUND', // Dependency missing (need npm install)
+    'SyntaxError'       // Code syntax error (need code fix)
+  ];
+  return !nonRecoverable.some(pattern => error.includes(pattern));
+}
+
+/**
+ * Verify environment is ready for execution
+ * @param {Array} filesModified - List of modified files
+ * @returns {Promise<boolean>} - True if environment is ready
+ */
+async function verifyEnvironment(filesModified) {
+  const hasPackageJson = filesModified.some(f => f.includes('package.json'));
+  if (hasPackageJson || await existsSafe('package.json')) {
+    // Check if node_modules exists
+    if (!await existsSafe('node_modules')) {
+      logger.info('Installing dependencies before execution');
+      try {
+        await new Promise((resolve, reject) => {
+          const npmInstall = spawn('npm', ['install'], {
+            cwd: process.env.SANDBOX_WORKSPACE || process.cwd(),
+            timeout: 120000
+          });
+
+          npmInstall.on('close', (code) => {
+            if (code === 0) {
+              resolve();
+            } else {
+              reject(new Error(`npm install failed with code ${code}`));
+            }
+          });
+
+          npmInstall.on('error', (error) => {
+            reject(error);
+          });
+        });
+        return true;
+      } catch (error) {
+        logger.error('Failed to install dependencies', { error: error.message });
+        return false;
+      }
+    }
+  }
+  return true;
+}
 
 /**
  * Execute complete agent loop with self-healing
@@ -160,6 +216,17 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
       }
 
       // PHASE 2: EXECUTE
+      logger.info(`Agent phase: execute (attempt ${healingAttempt + 1}/${MAX_RETRY_COUNT})`);
+
+      // Verify environment before execution
+      const envReady = await verifyEnvironment(results.plan?.filesModified || []);
+      if (!envReady) {
+        logger.error('Environment verification failed');
+        lastError = 'Environment verification failed - missing dependencies';
+        healingAttempt++;
+        continue;
+      }
+
       await reportProgress('execute', 'running', progressCallback, sessionId, { attempt: healingAttempt + 1 });
       const executeRunId = createAgentRun(sessionId, 'execute', { attempt: healingAttempt + 1 });
 
@@ -172,6 +239,21 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
       if (!results.execute.success) {
         updateAgentRun(executeRunId, 'failed', results.execute.error, healingAttempt);
         lastError = results.execute.error;
+
+        // Check if error is recoverable
+        if (!isRecoverableError(results.execute.error)) {
+          logger.error('Non-recoverable error detected, halting retry loop', {
+            error: results.execute.error,
+            attempt: healingAttempt
+          });
+          break; // Exit retry loop
+        }
+
+        // Apply exponential backoff BEFORE retry
+        const backoffMs = Math.min(2000 * Math.pow(2, healingAttempt), 30000);
+        logger.info('Backing off before execute retry', { backoffMs, attempt: healingAttempt });
+        await new Promise(resolve => setTimeout(resolve, backoffMs));
+
         healingAttempt++;
         continue;
       }

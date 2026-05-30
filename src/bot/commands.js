@@ -1,4 +1,4 @@
-import { createSession, getActiveSession, closeSession } from '../database/queries.js';
+import { createSession, getActiveSession, closeSession, getOrCreateSession, validateSession, closeStaleSessionsForUser } from '../database/queries.js';
 import { executeAgentLoop, formatLoopResults } from '../agent/loop.js';
 import { reviewPullRequest, formatReviewResult } from '../github/pr-review.js';
 import { getWorkflowStatus } from '../agent/phases/monitor.js';
@@ -101,21 +101,34 @@ export async function handleTask(ctx) {
   const userId = ctx.from.id;
 
   try {
-    // Ensure sandbox is ready
     await ensureSandbox();
 
-    // Create or get active session
-    let session = getActiveSession(userId);
-    if (!session) {
-      const sessionId = createSession(userId);
-      session = { id: sessionId };
-    }
+    // Close stale sessions first
+    closeStaleSessionsForUser(userId);
+
+    // Create session atomically
+    const sessionId = getOrCreateSession(userId, {
+      platform: 'telegram',
+      task: taskDescription,
+      username: ctx.from.username,
+      chatId: ctx.chat.id
+    });
+
+    // Validate session before execution
+    const session = validateSession(sessionId);
+
+    logger.info('Starting agent execution for Telegram task', {
+      sessionId,
+      userId,
+      task: taskDescription.substring(0, 100)
+    });
 
     // Send initial status
-    const statusMessage = await ctx.reply('🚀 Starting autonomous agent execution...\n\nPhase: Planning');
-    let lastPhase = 'plan';
+    const statusMessage = await ctx.reply('🚀 Starting autonomous agent execution...');
 
-    // Progress callback
+    let lastPhase = '';
+
+    // Progress callback with enhanced error handling
     const progressCallback = async (progress) => {
       const { phase, status, attempt } = progress;
 
@@ -129,7 +142,7 @@ export async function handleTask(ctx) {
         text += `\n🔄 Self-healing attempt ${attempt}/${process.env.MAX_RETRY_COUNT || 10}`;
       }
 
-      // Only update if phase changed
+      // Only update if phase changed or final status
       if (phase !== lastPhase || status === 'success' || status === 'failed') {
         try {
           await ctx.telegram.editMessageText(
@@ -141,14 +154,34 @@ export async function handleTask(ctx) {
           );
           lastPhase = phase;
         } catch (error) {
-          // Ignore edit errors
+          // Log specific error reason instead of silently ignoring
+          if (error.response?.error_code === 400) {
+            logger.warn('Telegram message edit failed - message unchanged or too old', {
+              sessionId,
+              phase,
+              errorCode: error.response.error_code,
+              description: error.response.description
+            });
+          } else if (error.response?.error_code === 429) {
+            logger.warn('Telegram rate limit hit', {
+              sessionId,
+              phase,
+              retryAfter: error.response.parameters?.retry_after
+            });
+          } else {
+            logger.error('Progress update failed', {
+              sessionId,
+              phase,
+              error: error.message,
+              errorCode: error.response?.error_code
+            });
+          }
         }
       }
     };
 
-    // Execute agent loop
-    logger.info('Executing agent loop for task', { task: taskDescription, userId });
-    const results = await executeAgentLoop(taskDescription, session.id, progressCallback);
+    // Execute agent loop with validated session
+    const results = await executeAgentLoop(taskDescription, sessionId, progressCallback);
 
     // Format and send results
     let formattedResults;

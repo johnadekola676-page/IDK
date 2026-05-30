@@ -538,6 +538,131 @@ export function getAuditHistory(filters = {}) {
   }
 }
 
+// ============================================================================
+// V3 Enhancement: Atomic Session Management for Telegram
+// ============================================================================
+
+/**
+ * Get or create session atomically with transaction
+ * Closes any existing active sessions for the user
+ * @param {string} userId - User ID
+ * @param {Object} metadata - Session metadata (platform, task, etc.)
+ * @returns {number} - Session ID
+ */
+export function getOrCreateSession(userId, metadata = {}) {
+  if (!userId) {
+    throw new Error('userId is required for session creation');
+  }
+
+  const db = getDatabase();
+
+  return db.transaction(() => {
+    // Close any existing active sessions
+    const closeStmt = db.prepare(`
+      UPDATE sessions
+      SET status = 'inactive', updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ? AND status = 'active'
+    `);
+    const closeResult = closeStmt.run(userId);
+
+    if (closeResult.changes > 0) {
+      logger.info('Closed previous active sessions', {
+        userId,
+        count: closeResult.changes
+      });
+    }
+
+    // Create new session
+    const createStmt = db.prepare(`
+      INSERT INTO sessions (user_id, status, metadata, created_at, updated_at)
+      VALUES (?, 'active', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `);
+
+    const metadataJson = JSON.stringify({
+      platform: metadata.platform || 'telegram',
+      taskDescription: metadata.task?.substring(0, 200),
+      timestamp: new Date().toISOString(),
+      ...metadata
+    });
+
+    const result = createStmt.run(userId, metadataJson);
+
+    logger.info('Created session atomically', {
+      sessionId: result.lastInsertRowid,
+      userId,
+      metadata: metadataJson,
+      closedPrevious: closeResult.changes > 0
+    });
+
+    return result.lastInsertRowid;
+  })();
+}
+
+/**
+ * Validate session state before execution
+ * @param {number} sessionId - Session ID
+ * @returns {Object} - Session with validation metadata
+ * @throws {Error} - If session is invalid
+ */
+export function validateSession(sessionId) {
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    SELECT s.*, COUNT(m.id) as message_count
+    FROM sessions s
+    LEFT JOIN messages m ON m.session_id = s.id
+    WHERE s.id = ?
+    GROUP BY s.id
+  `);
+  const session = stmt.get(sessionId);
+
+  if (!session) {
+    throw new Error(`Session ${sessionId} not found`);
+  }
+
+  if (session.status !== 'active') {
+    throw new Error(`Session ${sessionId} is ${session.status}`);
+  }
+
+  const ageMs = Date.now() - new Date(session.created_at).getTime();
+  const ageMinutes = Math.floor(ageMs / 60000);
+
+  logger.info('Session validated', {
+    sessionId,
+    messageCount: session.message_count,
+    ageMinutes
+  });
+
+  return session;
+}
+
+/**
+ * Close stale sessions for a user
+ * @param {string} userId - User ID
+ * @param {number} maxAgeMinutes - Maximum age in minutes (default 30)
+ * @returns {number} - Number of sessions closed
+ */
+export function closeStaleSessionsForUser(userId, maxAgeMinutes = 30) {
+  const db = getDatabase();
+  const stmt = db.prepare(`
+    UPDATE sessions
+    SET status = 'timeout', updated_at = CURRENT_TIMESTAMP
+    WHERE user_id = ?
+    AND status = 'active'
+    AND datetime(created_at) < datetime('now', '-' || ? || ' minutes')
+  `);
+  const result = stmt.run(userId, maxAgeMinutes);
+
+  if (result.changes > 0) {
+    logger.info('Closed stale sessions', {
+      userId,
+      count: result.changes,
+      maxAgeMinutes
+    });
+  }
+
+  return result.changes;
+}
+
 export default {
   createSession,
   getActiveSession,
@@ -558,5 +683,9 @@ export default {
   saveSuccessfulFix,
   incrementFixSuccess,
   logAuditEvent,
-  getAuditHistory
+  getAuditHistory,
+  // V3 enhancements
+  getOrCreateSession,
+  validateSession,
+  closeStaleSessionsForUser
 };
