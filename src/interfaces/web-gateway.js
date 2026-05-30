@@ -23,6 +23,7 @@ import apiRoutes from '../api/routes/index.js';
 import { initWebSocket } from '../api/websocket.js';
 import { executeAgentLoop } from '../agent/loop.js';
 import { addMessage } from '../database/queries.js';
+import { initializeRuflo, initializeSwarm, startRufloDaemon } from '../agent/max/ruflo-setup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -79,6 +80,63 @@ export class WebGateway {
     // Prune old sessions
     pruneSessions();
 
+    // Initialize Ruflo swarm framework (if enabled)
+    // This runs after database migrations but before server start
+    if (process.env.RUFLO_ENABLED === 'true') {
+      logger.info('Initializing Ruflo swarm framework');
+
+      try {
+        // Step 1: Initialize ruflo
+        const rufloInit = await initializeRuflo();
+        if (rufloInit.success && rufloInit.enabled) {
+          logger.info('Ruflo framework initialized', {
+            message: rufloInit.message
+          });
+
+          // Step 2: Initialize swarm topology
+          const swarmInit = await initializeSwarm();
+          if (swarmInit.success && swarmInit.enabled) {
+            logger.info('Ruflo swarm initialized', {
+              topology: swarmInit.topology,
+              maxAgents: swarmInit.maxAgents,
+              strategy: swarmInit.strategy
+            });
+          } else {
+            logger.warn('Ruflo swarm initialization skipped', {
+              reason: swarmInit.message
+            });
+          }
+
+          // Step 3: Start daemon (if enabled)
+          if (process.env.RUFLO_DAEMON_ENABLED === 'true') {
+            const daemonStart = await startRufloDaemon();
+            if (daemonStart.success && daemonStart.running) {
+              logger.info('Ruflo daemon started', {
+                port: daemonStart.port,
+                pid: daemonStart.pid
+              });
+            } else {
+              logger.warn('Ruflo daemon start skipped or failed', {
+                reason: daemonStart.message
+              });
+            }
+          }
+        } else {
+          logger.warn('Ruflo initialization skipped or failed', {
+            reason: rufloInit.message
+          });
+        }
+      } catch (error) {
+        // Graceful fallback: Log error but continue startup
+        logger.error('Ruflo initialization error (continuing without ruflo)', {
+          error: error.message,
+          stack: error.stack
+        });
+      }
+    } else {
+      logger.debug('Ruflo disabled (RUFLO_ENABLED not set to true)');
+    }
+
     // Ensure sandbox exists
     await ensureSandbox();
 
@@ -95,6 +153,18 @@ export class WebGateway {
     // Attempt bot start in background (non-blocking)
     logger.info('Attempting Telegram bot connection in background');
     this.attemptBotStart();
+
+    // Monitor memory usage for Railway deployment
+    if (process.env.NODE_ENV === 'production') {
+      setInterval(() => {
+        const usage = process.memoryUsage();
+        logger.info('Memory usage', {
+          heapUsed: Math.round(usage.heapUsed / 1024 / 1024) + 'MB',
+          rss: Math.round(usage.rss / 1024 / 1024) + 'MB',
+          external: Math.round(usage.external / 1024 / 1024) + 'MB'
+        });
+      }, 300000); // Every 5 minutes
+    }
 
     logger.info('✅ Web Gateway ready (Telegram bot connecting in background)');
   }

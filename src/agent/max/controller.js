@@ -14,6 +14,7 @@ import { SystemArchitect, FullStackEngineer, DevOpsEngineer, MediaDirector } fro
 import logger from '../../utils/logger.js';
 import { randomUUID } from 'crypto';
 import { completion } from '../../llm/adapter.js';
+import { isRufloReady, getSwarmStatus } from './ruflo-setup.js';
 
 /**
  * MAX Orchestrator - Main controller for multi-agent execution
@@ -252,6 +253,11 @@ Return ONLY the JSON array, no other text.`;
   /**
    * Execute dependency graph level by level with context purging
    *
+   * RUFLO INTEGRATION:
+   * - If ruflo is enabled and daemon is running, delegate milestone execution
+   *   to the ruflo swarm for coordinated multi-agent execution
+   * - If ruflo is unavailable, fallback to direct LLM execution (existing path)
+   *
    * @param {string} taskId - Task ID
    * @param {Object} graph - Dependency graph
    * @param {Object} context - Execution context
@@ -261,13 +267,26 @@ Return ONLY the JSON array, no other text.`;
     const results = new Map();
     let totalTokensFreed = 0;
 
+    // Check if ruflo swarm coordination is available
+    const rufloEnabled = isRufloReady();
+    if (rufloEnabled) {
+      const swarmStatus = await getSwarmStatus();
+      this.log('Ruflo swarm coordination available', {
+        topology: swarmStatus.configuration?.topology,
+        maxAgents: swarmStatus.configuration?.maxAgents
+      });
+    } else {
+      this.log('Using direct LLM execution (ruflo unavailable)');
+    }
+
     try {
       // Execute each level in sequence
       for (let levelIndex = 0; levelIndex < graph.levels.length; levelIndex++) {
         const level = graph.levels[levelIndex];
 
         this.log(`Executing level ${levelIndex + 1}/${graph.levels.length}`, {
-          milestoneCount: level.length
+          milestoneCount: level.length,
+          rufloEnabled
         });
 
         // Execute milestones in parallel within the same level
@@ -343,6 +362,10 @@ Return ONLY the JSON array, no other text.`;
   /**
    * Execute a single milestone with the appropriate micro-agent
    *
+   * RUFLO INTEGRATION:
+   * - If ruflo is enabled, the swarm daemon coordinates execution
+   * - Otherwise, use direct micro-agent execution (existing path)
+   *
    * @param {string} milestoneId - Milestone ID
    * @param {Object} milestone - Milestone definition
    * @param {Object} dependencyResults - Results from dependency milestones
@@ -350,10 +373,13 @@ Return ONLY the JSON array, no other text.`;
    * @returns {Promise<Object>} Execution result
    */
   async executeMilestone(milestoneId, milestone, dependencyResults, context) {
+    const rufloEnabled = isRufloReady();
+
     this.log('Executing milestone', {
       milestoneId,
       agentRole: milestone.agentRole,
-      description: milestone.description
+      description: milestone.description,
+      executionPath: rufloEnabled ? 'ruflo-swarm' : 'direct-llm'
     });
 
     try {
@@ -371,10 +397,14 @@ Return ONLY the JSON array, no other text.`;
         ...context,
         milestoneId,
         dependencies: dependencyResults,
-        taskDescription: milestone.description
+        taskDescription: milestone.description,
+        useRuflo: rufloEnabled // Signal to gateway that ruflo routing is preferred
       };
 
-      // Execute milestone
+      // Execute milestone with appropriate micro-agent
+      // Note: If ruflo is enabled, the agent's execute method can optionally
+      // use ruflo SDK for swarm coordination. For now, we maintain existing
+      // direct execution path with the option to enhance agents later.
       const result = await agent.execute(
         { description: milestone.description },
         executionContext

@@ -14,6 +14,7 @@ import { GeminiProvider } from './providers/gemini.js';
 import { GroqProvider } from './providers/groq.js';
 import { AnthropicProvider } from './providers/anthropic.js';
 import logger from '../utils/logger.js';
+import { isRufloReady } from '../agent/max/ruflo-setup.js';
 
 /**
  * Task type routing matrix
@@ -86,6 +87,12 @@ export class MultiSDKGateway {
   /**
    * Create completion with intelligent routing
    *
+   * RUFLO INTEGRATION POINT:
+   * - When RUFLO_ENABLED=true and ruflo daemon is running, high-level goals
+   *   can be routed through the ruflo swarm for multi-agent coordination
+   * - This happens at the controller level (not here), but gateway provides
+   *   fallback routing when ruflo is unavailable
+   *
    * @param {Object} options - Completion options
    * @param {Array} options.messages - Chat messages
    * @param {number} options.temperature - Sampling temperature
@@ -93,6 +100,7 @@ export class MultiSDKGateway {
    * @param {string} options.taskType - Task type for routing
    * @param {string} options.forceProvider - Force specific provider
    * @param {Object} options.budgetManager - Token budget manager
+   * @param {boolean} options.useRuflo - Whether to attempt ruflo routing (set by controller)
    * @returns {Promise<Object>} Completion result
    */
   async createCompletion(options) {
@@ -102,7 +110,8 @@ export class MultiSDKGateway {
       maxTokens = 2000,
       taskType = 'complex',
       forceProvider = null,
-      budgetManager = null
+      budgetManager = null,
+      useRuflo = false
     } = options;
 
     // Check budget if provided
@@ -111,6 +120,16 @@ export class MultiSDKGateway {
     }
 
     try {
+      // Ruflo integration: Check if high-level goal should use swarm coordination
+      // Note: Actual ruflo routing happens at controller.js level
+      // This is just for logging/awareness
+      if (useRuflo && isRufloReady()) {
+        logger.debug('Task eligible for ruflo swarm routing', {
+          taskType,
+          rufloEnabled: true
+        });
+      }
+
       // Determine provider based on routing mode
       let selectedProvider = null;
 

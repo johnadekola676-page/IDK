@@ -33,6 +33,30 @@ COPY package.json package-lock.json ./
 # Install ONLY production dependencies
 RUN npm ci --only=production && npm cache clean --force
 
+# Install ruflo and initialize (non-interactive for Docker)
+RUN npm install ruflo@3.10.10 --omit=dev || echo "Ruflo install failed, continuing"
+
+# Initialize ruflo (non-interactive, don't fail build if it errors)
+RUN RUFLO_AUTO_CONFIRM=true NO_INTERACTIVE=true npx ruflo init --force || echo "Ruflo init skipped"
+
+# Initialize swarm (non-interactive)
+RUN RUFLO_AUTO_CONFIRM=true NO_INTERACTIVE=true npx ruflo swarm init --topology hierarchical --max-agents 4 --strategy specialized || echo "Ruflo swarm init skipped"
+
+# Aggressive cleanup to maintain Docker image size <120MB
+RUN npm cache clean --force && \
+    rm -rf /root/.npm && \
+    rm -rf /tmp/* && \
+    find /app/node_modules -name "*.map" -delete && \
+    find /app/node_modules -name "*.md" -delete && \
+    find /app/node_modules -name "*.txt" -delete && \
+    find /app/node_modules -name "CHANGELOG*" -delete && \
+    find /app/node_modules -name "README*" -delete && \
+    find /app/node_modules -name "LICENSE*" -delete && \
+    find /app/node_modules -name "test" -type d -exec rm -rf {} + 2>/dev/null || true && \
+    find /app/node_modules -name "tests" -type d -exec rm -rf {} + 2>/dev/null || true && \
+    find /app/node_modules -name "docs" -type d -exec rm -rf {} + 2>/dev/null || true && \
+    find /app/node_modules -name "examples" -type d -exec rm -rf {} + 2>/dev/null || true
+
 # ============================================================================
 # STAGE 3: Final production image (minimal runtime)
 # ============================================================================
@@ -63,6 +87,7 @@ COPY src/ui ./src/ui
 COPY src/utils ./src/utils
 COPY server.js ./
 COPY package.json ./
+COPY ruflo.config.js ./
 
 # Copy built frontend from builder
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist

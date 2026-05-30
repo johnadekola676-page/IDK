@@ -42,6 +42,7 @@
     "groq-sdk": "^0.7.0",
     "jsonwebtoken": "^9.0.3",
     "recast": "^0.23.4",
+    "ruflo": "^3.10.10",
     "simple-git": "^3.27.0",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
