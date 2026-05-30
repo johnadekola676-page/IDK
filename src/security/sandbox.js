@@ -188,20 +188,35 @@ export function validateEnvironment() {
     errors.push(`Failed to check sandbox workspace: ${error.message}`);
   }
 
-  // Check required environment variables
+  // Check required environment variables (core requirements)
   const requiredVars = [
-    'TELEGRAM_BOT_TOKEN',
-    'AUTHORIZED_USER_ID',
     'GROQ_API_KEY',
     'GITHUB_TOKEN',
-    'GITHUB_REPO_OWNER',
-    'GITHUB_REPO_NAME',
+    'GITHUB_OWNER',
+    'GITHUB_REPO',
   ];
 
   for (const varName of requiredVars) {
     if (!process.env[varName]) {
       errors.push(`Missing required environment variable: ${varName}`);
     }
+  }
+
+  // Check optional environment variables (Telegram bot)
+  const optionalVars = [
+    'TELEGRAM_BOT_TOKEN',
+    'AUTHORIZED_USER_ID',
+  ];
+
+  const warnings = [];
+  for (const varName of optionalVars) {
+    if (!process.env[varName]) {
+      warnings.push(`Optional environment variable not set: ${varName} (Telegram bot will be disabled)`);
+    }
+  }
+
+  if (warnings.length > 0) {
+    logger.warn('Optional features disabled', { warnings });
   }
 
   return {

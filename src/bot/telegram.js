@@ -149,7 +149,51 @@ export async function startBot(bot, options = {}) {
   }
 }
 
+/**
+ * Start bot in webhook mode
+ * @param {Telegraf} bot - Telegraf bot instance
+ * @param {Object} options - Webhook options
+ * @param {string} options.webhookUrl - Full webhook URL (e.g., https://domain.com/api/telegram/webhook)
+ * @param {string} options.path - Webhook path (default: /api/telegram/webhook)
+ * @param {number} options.port - Port for webhook server (default: process.env.PORT)
+ * @returns {Promise<Object>} Result object with success status
+ */
+export async function startBotWebhook(bot, options = {}) {
+  try {
+    const {
+      webhookUrl = process.env.TELEGRAM_WEBHOOK_URL,
+      path = '/api/telegram/webhook',
+      port = process.env.PORT || 3000
+    } = options;
+
+    if (!webhookUrl) {
+      throw new Error('TELEGRAM_WEBHOOK_URL is required for webhook mode');
+    }
+
+    logger.info('Starting Telegram bot in webhook mode', {
+      webhookUrl,
+      path,
+      port
+    });
+
+    // Set webhook
+    await bot.telegram.setWebhook(webhookUrl);
+
+    logger.info('Webhook set successfully', { webhookUrl });
+
+    return { success: true, mode: 'webhook' };
+  } catch (error) {
+    logger.error('Failed to set webhook', {
+      error: error.message,
+      webhookUrl: options.webhookUrl
+    });
+
+    return { success: false, error: error.message, mode: 'webhook' };
+  }
+}
+
 export default {
   initBot,
-  startBot
+  startBot,
+  startBotWebhook
 };

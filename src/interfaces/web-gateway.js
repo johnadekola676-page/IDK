@@ -15,7 +15,7 @@ import fs from 'fs';
 import { initDatabase, pruneSessions } from '../database/db.js';
 import { migrateToV2, needsMigration } from '../database/migrate-v2.js';
 import { runMAXMigration } from '../database/migrate-max.js';
-import { initBot, startBot } from '../bot/telegram.js';
+import { initBot, startBot, startBotWebhook } from '../bot/telegram.js';
 import { ensureSandbox } from '../utils/filesystem.js';
 import { validateEnvironment } from '../security/sandbox.js';
 import logger from '../utils/logger.js';
@@ -143,16 +143,36 @@ export class WebGateway {
     // Create Express app
     this.createExpressApp();
 
-    // Initialize Telegram bot
-    logger.info('Initializing Telegram bot');
-    this.bot = initBot();
+    // Initialize Telegram bot (if configured)
+    if (process.env.TELEGRAM_BOT_TOKEN) {
+      logger.info('Initializing Telegram bot');
+      try {
+        this.bot = initBot();
+        logger.info('✅ Bot instance created successfully');
+      } catch (error) {
+        logger.error('❌ Failed to create bot instance', {
+          error: error.message,
+          hasToken: !!process.env.TELEGRAM_BOT_TOKEN,
+          tokenLength: process.env.TELEGRAM_BOT_TOKEN?.length || 0
+        });
+        // Don't throw - allow server to start without bot
+        this.bot = null;
+      }
+    } else {
+      logger.warn('⚠️  Telegram bot disabled - TELEGRAM_BOT_TOKEN not set');
+      this.bot = null;
+    }
 
     // Start server FIRST (non-blocking)
     await this.startServer();
 
-    // Attempt bot start in background (non-blocking)
-    logger.info('Attempting Telegram bot connection in background');
-    this.attemptBotStart();
+    // Attempt bot start in background (non-blocking, if bot initialized)
+    if (this.bot) {
+      logger.info('Attempting Telegram bot connection in background');
+      this.attemptBotStart();
+    } else {
+      logger.info('Telegram bot not initialized - skipping connection attempt');
+    }
 
     // Monitor memory usage for Railway deployment
     if (process.env.NODE_ENV === 'production') {
@@ -193,6 +213,31 @@ export class WebGateway {
 
     // API routes
     this.app.use('/api', apiRoutes);
+
+    // Telegram webhook route (if webhook mode enabled)
+    if (process.env.TELEGRAM_WEBHOOK_URL && process.env.TELEGRAM_BOT_TOKEN) {
+      const webhookPath = process.env.TELEGRAM_WEBHOOK_PATH || '/api/telegram/webhook';
+
+      logger.info('Setting up Telegram webhook route', { path: webhookPath });
+
+      // This route will be used when bot is in webhook mode
+      this.app.post(webhookPath, async (req, res) => {
+        if (!this.bot) {
+          res.sendStatus(503); // Service unavailable
+          return;
+        }
+
+        try {
+          await this.bot.handleUpdate(req.body);
+          res.sendStatus(200);
+        } catch (error) {
+          logger.error('Webhook handler error', { error: error.message });
+          res.sendStatus(500);
+        }
+      });
+
+      logger.info('✅ Telegram webhook route registered', { path: webhookPath });
+    }
 
     // Serve frontend static files
     const frontendDistPath = path.join(path.dirname(__dirname), '..', 'frontend', 'dist');
@@ -261,72 +306,74 @@ export class WebGateway {
   }
 
   /**
-   * Attempt to start Telegram bot with exponential backoff retry logic
-   * Non-blocking operation - failures will be retried in the background
+   * Attempt to start Telegram bot (polling or webhook mode)
    */
   async attemptBotStart() {
-    // Calculate retry delay using exponential backoff
+    if (!this.bot) {
+      logger.warn('Bot instance not available, skipping start attempt');
+      return;
+    }
+
+    // Calculate retry delay
     let retryDelay = 0;
     if (this.botRetryCount > 0) {
-      // First 5 attempts: exponential backoff (5s, 15s, 45s, 135s, 405s)
-      // After 5 attempts: switch to 5 minute intervals
       if (this.botRetryCount <= 5) {
         retryDelay = 5000 * Math.pow(3, this.botRetryCount - 1);
       } else {
-        retryDelay = 5 * 60 * 1000; // 5 minutes
+        retryDelay = 5 * 60 * 1000;
       }
+
+      logger.info('Waiting before bot launch attempt', {
+        attempt: this.botRetryCount + 1,
+        retryDelay
+      });
+
+      await new Promise(resolve => setTimeout(resolve, retryDelay));
     }
 
-    // Attempt to start the bot
-    const result = await startBot(this.bot, {
-      retryDelay,
-      onFailure: (error) => {
-        logger.warn('Bot start failure callback triggered', {
-          attempt: this.botRetryCount + 1,
-          error: error.message
-        });
-      }
-    });
+    this.botRetryCount++;
 
-    if (result.success) {
-      // Success - bot is connected
-      this.botConnected = true;
-      global.botStatus = 'connected';
-      const attemptNumber = this.botRetryCount + 1;
-      this.botRetryCount = 0;
+    // Determine mode: webhook if URL set, otherwise polling
+    const useWebhook = !!process.env.TELEGRAM_WEBHOOK_URL;
+    let result;
 
-      logger.info('✅ Telegram bot connected successfully', {
-        afterAttempts: attemptNumber
+    if (useWebhook) {
+      logger.info('Starting bot in WEBHOOK mode');
+      result = await startBotWebhook(this.bot, {
+        webhookUrl: process.env.TELEGRAM_WEBHOOK_URL,
+        path: process.env.TELEGRAM_WEBHOOK_PATH || '/api/telegram/webhook',
+        port: this.port
       });
     } else {
-      // Failure - schedule retry if retryable
-      this.botConnected = false;
-      global.botStatus = 'disconnected';
-      this.botRetryCount++;
+      logger.info('Starting bot in POLLING mode');
+      result = await startBot(this.bot, { retryDelay });
+    }
 
-      if (result.retryable) {
-        const nextRetryDelay = this.botRetryCount <= 5
-          ? 5000 * Math.pow(3, this.botRetryCount - 1)
-          : 5 * 60 * 1000;
+    if (result.success) {
+      this.botConnected = true;
+      logger.info('✅ Telegram bot connected successfully', {
+        mode: result.mode || 'polling',
+        attempt: this.botRetryCount
+      });
+    } else if (result.retryable) {
+      const nextRetryDelay = this.botRetryCount <= 5
+        ? 5000 * Math.pow(3, this.botRetryCount)
+        : 5 * 60 * 1000;
 
-        logger.info('Scheduling bot reconnection attempt', {
-          attempt: this.botRetryCount,
-          nextRetryIn: `${Math.round(nextRetryDelay / 1000)}s`,
-          errorCode: result.code,
-          maxAttemptsReached: this.botRetryCount > 5
-        });
+      logger.info('Scheduling bot reconnection attempt', {
+        attempt: this.botRetryCount,
+        nextRetryIn: `${nextRetryDelay / 1000}s`,
+        reason: result.error?.message || 'Unknown error'
+      });
 
-        // Schedule next retry
-        this.botRetryTimer = setTimeout(() => {
-          this.attemptBotStart();
-        }, nextRetryDelay);
-      } else {
-        logger.error('Bot start failed with non-retryable error', {
-          error: result.error.message,
-          code: result.code
-        });
-        global.botStatus = 'failed';
-      }
+      this.botRetryTimer = setTimeout(() => {
+        this.attemptBotStart();
+      }, nextRetryDelay);
+    } else {
+      logger.error('❌ Bot startup failed with non-retryable error', {
+        error: result.error?.message,
+        code: result.code
+      });
     }
   }
 
