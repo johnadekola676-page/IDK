@@ -191,15 +191,18 @@ export async function handleTask(ctx) {
 
     // Send detailed error if failed
     if (!results.success) {
-      let errorDetails = '<b>Error Details:</b>\n\n';
+      let errorDetails = '❌ Error Details:\n\n';
 
       if (results.test && !results.test.success && !results.test.skipped) {
-        errorDetails += `Test failed:\n<pre>${results.test.stderr?.substring(0, 500) || 'Unknown error'}</pre>`;
+        const errorMsg = results.test.stderr?.substring(0, 500) || 'Unknown error';
+        errorDetails += `Test failed:\n${errorMsg}`;
       } else if (results.error) {
-        errorDetails += `<pre>${results.error.substring(0, 500)}</pre>`;
+        errorDetails += results.error.substring(0, 500);
+      } else {
+        errorDetails += 'No error details available';
       }
 
-      await ctx.reply(sanitizeForTelegram(errorDetails), { parse_mode: 'HTML' });
+      await ctx.reply(errorDetails);
     }
 
     // Send workflow link if available
@@ -647,6 +650,28 @@ export async function handleUnknown(ctx) {
     return;
   }
 
+  // Detect greetings and casual messages - don't trigger agent loop
+  const casualPatterns = [
+    /^(hi|hello|hey|greetings|sup|yo)\b/i,
+    /^(thanks|thank you|thx|ty)\b/i,
+    /^(ok|okay|cool|nice|great|awesome)\b/i,
+    /^(bye|goodbye|see you|later)\b/i,
+    /^(yes|no|yep|nope|yeah|nah)\b/i,
+    /^(how are you|what'?s up|wassup)\b/i
+  ];
+
+  const isCasualMessage = casualPatterns.some(pattern => pattern.test(text));
+
+  if (isCasualMessage) {
+    await ctx.reply(
+      '👋 Hello! I\'m MAX, your autonomous development assistant.\n\n' +
+      'To execute a task, use: /task <description>\n' +
+      'For help, type: /help',
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+
   // Otherwise, treat as natural language task request
   const validation = validateUserInput(text);
   if (!validation.valid) {
@@ -716,15 +741,18 @@ export async function handleUnknown(ctx) {
 
     // Send detailed error if failed
     if (!results.success) {
-      let errorDetails = '<b>Error Details:</b>\n\n';
+      let errorDetails = '❌ Error Details:\n\n';
 
       if (results.test && !results.test.success && !results.test.skipped) {
-        errorDetails += `Test failed:\n<pre>${results.test.stderr?.substring(0, 500) || 'Unknown error'}</pre>`;
+        const errorMsg = results.test.stderr?.substring(0, 500) || 'Unknown error';
+        errorDetails += `Test failed:\n${errorMsg}`;
       } else if (results.error) {
-        errorDetails += `<pre>${results.error.substring(0, 500)}</pre>`;
+        errorDetails += results.error.substring(0, 500);
+      } else {
+        errorDetails += 'No error details available';
       }
 
-      await ctx.reply(sanitizeForTelegram(errorDetails), { parse_mode: 'HTML' });
+      await ctx.reply(errorDetails);
     }
 
     // Send workflow link if available
