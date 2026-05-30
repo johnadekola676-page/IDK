@@ -1,28 +1,9 @@
 import { Telegraf } from 'telegraf';
-import { authMiddleware, errorMiddleware, loggingMiddleware } from './middleware.js';
-import {
-  handleStart,
-  handleHelp,
-  handleTask,
-  handleReviewPR,
-  handleStatus,
-  handleSetRepo,
-  handleRepos,
-  handleCommit,
-  handleTest,
-  handleBuild,
-  handlePR,
-  handleDeploy,
-  handleRollback,
-  handleLogs,
-  handleFix,
-  handleDocs,
-  handleUnknown
-} from './commands.js';
+import { handleTelegramMessage, handleTelegramCallback } from './telegram-handler.js';
 import logger from '../utils/logger.js';
 
 /**
- * Initialize Telegram bot
+ * Initialize Telegram bot with new handler
  * @returns {Telegraf} Bot instance
  */
 export function initBot() {
@@ -33,7 +14,6 @@ export function initBot() {
   }
 
   // Telemetry logging for token verification
-  console.log('Token check:', token?.substring(0, 5) + '...', 'Length:', token?.length);
   logger.info('Initializing Telegram bot', {
     tokenPrefix: token?.substring(0, 5),
     tokenLength: token?.length
@@ -41,154 +21,125 @@ export function initBot() {
 
   const bot = new Telegraf(token);
 
-  // Apply middleware
-  bot.use(loggingMiddleware);
-  bot.use(authMiddleware);
+  // Log all updates for debugging
+  bot.use((ctx, next) => {
+    logger.debug('Telegram update received', {
+      updateType: ctx.updateType,
+      chatId: ctx.chat?.id,
+      userId: ctx.from?.id
+    });
+    return next();
+  });
 
-  // Register commands
-  bot.command('start', handleStart);
-  bot.command('help', handleHelp);
-  bot.command('task', handleTask);
-  bot.command('review_pr', handleReviewPR);
-  bot.command('reviewpr', handleReviewPR); // Alias without underscore
-  bot.command('status', handleStatus);
+  // Handle all messages (commands and text) with unified handler
+  bot.on('message', handleTelegramMessage);
 
-  // Repository commands
-  bot.command('setrepo', handleSetRepo);
-  bot.command('repos', handleRepos);
+  // Handle callback queries (inline keyboard responses)
+  bot.on('callback_query', handleTelegramCallback);
 
-  // Quick actions
-  bot.command('commit', handleCommit);
-  bot.command('test', handleTest);
-  bot.command('build', handleBuild);
+  // Error handler
+  bot.catch((err, ctx) => {
+    logger.error('Telegram bot error', {
+      error: err.message,
+      stack: err.stack,
+      updateType: ctx.updateType
+    });
 
-  // Advanced commands
-  bot.command('pr', handlePR);
-  bot.command('deploy', handleDeploy);
-  bot.command('rollback', handleRollback);
-  bot.command('logs', handleLogs);
-  bot.command('fix', handleFix);
-  bot.command('docs', handleDocs);
+    // Try to notify user
+    if (ctx.reply) {
+      ctx.reply('❌ An error occurred. Please try again.').catch(() => {});
+    }
+  });
 
-  // Handle unknown commands
-  bot.on('message', handleUnknown);
-
-  // Error handling
-  bot.catch(errorMiddleware);
-
-  logger.info('Telegram bot initialized');
+  logger.info('Telegram bot initialized with new handler');
 
   return bot;
 }
 
 /**
- * Start bot with non-blocking error handling
+ * Start bot in polling mode
  * @param {Telegraf} bot - Bot instance
- * @param {Object} options - Optional configuration
- * @param {Function} options.onFailure - Callback for handling failures
- * @param {number} options.retryDelay - Delay in milliseconds before attempting launch
- * @returns {Promise<{success: boolean, error?: Error, code?: number, retryable?: boolean}>}
+ * @param {object} options - Start options
+ * @returns {object} Result with success status
  */
 export async function startBot(bot, options = {}) {
-  const { onFailure, retryDelay = 0 } = options;
-
   try {
-    // Wait for retry delay if specified
+    logger.info('Starting Telegram bot in polling mode');
+
+    const { retryDelay = 0 } = options;
+
     if (retryDelay > 0) {
-      logger.info('Waiting before bot launch attempt', { retryDelay });
       await new Promise(resolve => setTimeout(resolve, retryDelay));
     }
 
-    logger.info('Starting Telegram bot');
-
-    // Enable graceful stop
-    process.once('SIGINT', () => bot.stop('SIGINT'));
-    process.once('SIGTERM', () => bot.stop('SIGTERM'));
-
-    // Start polling
-    await bot.launch();
-
-    logger.info('Telegram bot started successfully');
-    return { success: true };
-  } catch (error) {
-    // Check for 409 Conflict error (another instance running)
-    const errorCode = error.response?.error_code;
-    const is409Conflict = errorCode === 409;
-    const retryable = is409Conflict || errorCode === 429 || errorCode >= 500;
-
-    // Log as warning (non-fatal) instead of error
-    logger.warn('Failed to start bot', {
-      error: error.message,
-      code: errorCode,
-      retryable,
-      description: error.response?.description
+    await bot.launch({
+      dropPendingUpdates: true,
+      allowedUpdates: ['message', 'callback_query']
     });
 
-    // Output structured diagnostic data
-    console.error(JSON.stringify({
-      timestamp: new Date().toISOString(),
-      event: 'bot_start_failure',
+    logger.info('✅ Telegram bot started successfully (polling mode)');
+
+    return { success: true, mode: 'polling' };
+
+  } catch (error) {
+    logger.error('Failed to start Telegram bot', {
       error: error.message,
-      code: errorCode,
-      retryable,
-      stack: error.stack
-    }, null, 2));
+      code: error.code,
+      response: error.response?.description
+    });
 
-    // Call failure callback if provided
-    if (onFailure) {
-      onFailure(error);
-    }
+    // Determine if error is retryable
+    const retryableErrors = ['ETIMEDOUT', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN'];
+    const isRetryable = retryableErrors.includes(error.code) ||
+                       error.message.includes('network') ||
+                       error.message.includes('timeout');
 
-    // Return failure result instead of throwing
     return {
       success: false,
       error,
-      code: errorCode,
-      retryable
+      retryable: isRetryable,
+      code: error.code
     };
   }
 }
 
 /**
  * Start bot in webhook mode
- * @param {Telegraf} bot - Telegraf bot instance
- * @param {Object} options - Webhook options
- * @param {string} options.webhookUrl - Full webhook URL (e.g., https://domain.com/api/telegram/webhook)
- * @param {string} options.path - Webhook path (default: /api/telegram/webhook)
- * @param {number} options.port - Port for webhook server (default: process.env.PORT)
- * @returns {Promise<Object>} Result object with success status
+ * @param {Telegraf} bot - Bot instance
+ * @param {object} options - Webhook options
+ * @returns {object} Result with success status
  */
 export async function startBotWebhook(bot, options = {}) {
   try {
-    const {
-      webhookUrl = process.env.TELEGRAM_WEBHOOK_URL,
-      path = '/api/telegram/webhook',
-      port = process.env.PORT || 3000
-    } = options;
+    logger.info('Starting Telegram bot in webhook mode', options);
+
+    const { webhookUrl, path = '/api/telegram/webhook', port } = options;
 
     if (!webhookUrl) {
-      throw new Error('TELEGRAM_WEBHOOK_URL is required for webhook mode');
+      throw new Error('Webhook URL is required for webhook mode');
     }
 
-    logger.info('Starting Telegram bot in webhook mode', {
-      webhookUrl,
-      path,
-      port
-    });
-
     // Set webhook
-    await bot.telegram.setWebhook(webhookUrl);
+    await bot.telegram.setWebhook(`${webhookUrl}${path}`);
 
-    logger.info('Webhook set successfully', { webhookUrl });
+    logger.info('✅ Telegram bot webhook set successfully', {
+      url: `${webhookUrl}${path}`
+    });
 
     return { success: true, mode: 'webhook' };
+
   } catch (error) {
-    logger.error('Failed to set webhook', {
+    logger.error('Failed to set Telegram webhook', {
       error: error.message,
-      webhookUrl: options.webhookUrl
+      code: error.code
     });
 
-    return { success: false, error: error.message, mode: 'webhook' };
+    return {
+      success: false,
+      error,
+      retryable: false,
+      code: error.code
+    };
   }
 }
 

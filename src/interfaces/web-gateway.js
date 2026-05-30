@@ -185,6 +185,20 @@ export class WebGateway {
         });
       }, 300000); // Every 5 minutes
     }
+    // Railway self-ping to prevent idle timeout
+    const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN;
+    if (RAILWAY_URL) {
+      setInterval(async () => {
+        try {
+          const url = `https://${RAILWAY_URL}/health`;
+          await fetch(url);
+          logger.debug('Self-ping successful');
+        } catch (e) {
+          logger.debug('Self-ping failed', { error: e.message });
+        }
+      }, 4 * 60 * 1000); // Every 4 minutes
+    }
+
 
     logger.info('✅ Web Gateway ready (Telegram bot connecting in background)');
   }

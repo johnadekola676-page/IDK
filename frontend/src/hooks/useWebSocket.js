@@ -159,13 +159,5 @@ export function useWebSocket(sessionId) {
     }
   };
 
-  return {
-    connected,
-    progress,
-    message,
-    status,
-    subscribe,
-    unsubscribe,
-    isReconnecting: !connected && socketRef.current?.active  // Track reconnection state
-  };
+  return socketRef.current;
 }

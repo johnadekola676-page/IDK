@@ -1,72 +1,178 @@
 /**
  * Agent execution API routes
+ * Handles task execution, cancellation, and status monitoring
  */
 
-import { Router } from 'express';
-import { getDatabase } from '../../database/db.js';
-import { getOrCreateSession } from '../../database/queries.js';
-import { executeAgentLoop } from '../../agent/loop.js';
+import express from 'express';
 import logger from '../../utils/logger.js';
-import { authenticate } from '../middleware/auth.js';
+import { getDatabase } from '../../database/db.js';
+import { executeAgentLoop } from '../../agent/loop.js';
 
-const db = getDatabase();
+const router = express.Router();
 
-const router = Router();
+// Track active tasks for cancellation
+const activeTasks = new Map();
 
 /**
  * POST /api/agent/task
- * Trigger agent execution for a task (Web/API endpoint)
+ * Execute a task (returns immediately, runs in background)
  */
-router.post('/task', authenticate, async (req, res) => {
+router.post('/task', async (req, res) => {
   try {
-    const { task, sessionId, userId } = req.body;
+    const { task, sessionId, userId, model } = req.body;
 
-    if (!task) {
-      return res.status(400).json({ error: 'Task is required' });
-    }
-
-    // Get or create session atomically
-    const actualSessionId = sessionId || getOrCreateSession(
-      String(userId || req.user?.id || 'api_user'),
-      'api'
-    );
-
-    logger.info('Agent task triggered via API', {
-      sessionId: actualSessionId,
-      userId,
-      task: task.substring(0, 100)
+    logger.info('API', {
+      method: 'POST',
+      path: '/api/agent/task',
+      body: { task: task?.substring(0, 100), sessionId, userId, model }
     });
 
-    // Execute agent loop asynchronously
-    setImmediate(() => {
-      executeAgentLoop(task, actualSessionId, null, userId).catch(err => {
-        logger.error('Agent execution failed', {
-          sessionId: actualSessionId,
-          error: err.message
-        });
+    // Validate required fields
+    if (!task) {
+      return res.status(400).json({
+        error: 'task is required',
+        code: 'MISSING_TASK'
       });
+    }
+
+    const db = getDatabase();
+
+    // Get or create session
+    let actualSessionId = sessionId;
+    if (!actualSessionId) {
+      const requestUserId = userId || 'default-user';
+      actualSessionId = `web_${Date.now()}_${requestUserId}`;
+      const now = new Date().toISOString();
+
+      db.prepare(`
+        INSERT INTO sessions (id, user_id, platform, created_at, last_activity)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(actualSessionId, requestUserId, 'web', now, now);
+    }
+
+    // Save user message
+    db.prepare(`
+      INSERT INTO messages (session_id, role, content, timestamp)
+      VALUES (?, ?, ?, ?)
+    `).run(actualSessionId, 'user', task, new Date().toISOString());
+
+    logger.info('API', {
+      method: 'POST',
+      path: '/api/agent/task',
+      status: 200,
+      sessionId: actualSessionId
+    });
+
+    // Return immediately
+    res.json({
+      sessionId: actualSessionId,
+      status: 'started'
+    });
+
+    // Execute in background
+    setImmediate(async () => {
+      try {
+        // Mark as active
+        activeTasks.set(actualSessionId, { cancelled: false });
+
+        await executeAgentLoop({
+          task,
+          sessionId: actualSessionId,
+          userId: userId || 'default-user',
+          platform: 'web',
+          model,
+          streamCallback: null // Socket.IO will handle streaming
+        });
+
+        // Remove from active tasks
+        activeTasks.delete(actualSessionId);
+
+      } catch (err) {
+        logger.error('AGENT_TASK_ERROR', {
+          sessionId: actualSessionId,
+          error: err.message,
+          stack: err.stack
+        });
+        activeTasks.delete(actualSessionId);
+      }
+    });
+
+  } catch (err) {
+    logger.error('API_ERROR', {
+      method: 'POST',
+      path: '/api/agent/task',
+      error: err.message,
+      stack: err.stack
+    });
+
+    res.status(500).json({
+      error: 'Failed to start task',
+      code: 'TASK_START_ERROR'
+    });
+  }
+});
+
+/**
+ * POST /api/agent/cancel/:sessionId
+ * Cancel a running task
+ */
+router.post('/cancel/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+
+    logger.info('API', {
+      method: 'POST',
+      path: `/api/agent/cancel/${sessionId}`
+    });
+
+    const task = activeTasks.get(sessionId);
+
+    if (task) {
+      task.cancelled = true;
+      logger.info('TASK_CANCELLED', { sessionId });
+    }
+
+    logger.info('API', {
+      method: 'POST',
+      path: `/api/agent/cancel/${sessionId}`,
+      status: 200,
+      wasCancelled: !!task
     });
 
     res.json({
-      success: true,
-      message: 'Agent execution started',
-      sessionId: actualSessionId,
-      taskId: actualSessionId
+      cancelled: true,
+      sessionId
     });
 
-  } catch (error) {
-    logger.error('Failed to trigger agent task', { error: error.message });
-    res.status(500).json({ error: 'Failed to trigger agent task' });
+  } catch (err) {
+    logger.error('API_ERROR', {
+      method: 'POST',
+      path: `/api/agent/cancel/${req.params.sessionId}`,
+      error: err.message,
+      stack: err.stack
+    });
+
+    res.status(500).json({
+      error: 'Failed to cancel task',
+      code: 'TASK_CANCEL_ERROR'
+    });
   }
 });
 
 /**
  * GET /api/agent/status/:sessionId
- * Get current agent status for a session with recent messages
+ * Get current agent status for a session
  */
-router.get('/status/:sessionId', authenticate, async (req, res) => {
+router.get('/status/:sessionId', async (req, res) => {
   try {
     const { sessionId } = req.params;
+
+    logger.info('API', {
+      method: 'GET',
+      path: `/api/agent/status/${sessionId}`
+    });
+
+    const db = getDatabase();
 
     // Get latest agent run
     const latestRun = db.prepare(`
@@ -76,163 +182,154 @@ router.get('/status/:sessionId', authenticate, async (req, res) => {
       LIMIT 1
     `).get(sessionId);
 
-    // Get recent messages
-    const messages = db.prepare(`
-      SELECT role, content, timestamp
+    // Get file modifications count
+    const filesModified = db.prepare(`
+      SELECT COUNT(*) as count
       FROM messages
-      WHERE session_id = ?
-      ORDER BY timestamp DESC
-      LIMIT 10
-    `).all(sessionId);
-
-    if (!latestRun) {
-      return res.json({
-        success: true,
-        status: 'idle',
-        currentPhase: null,
-        agentRun: null,
-        messages: messages.reverse()
-      });
-    }
-
-    // Determine status based on agent run
-    let status = 'idle';
-    if (latestRun.status === 'running') {
-      status = 'running';
-    } else if (latestRun.status === 'failed') {
-      status = 'error';
-    } else if (latestRun.status === 'success') {
-      status = 'completed';
-    }
-
-    res.json({
-      success: true,
-      status,
-      currentPhase: latestRun.phase,
-      agentRun: latestRun,
-      messages: messages.reverse()
-    });
-  } catch (error) {
-    logger.error('Failed to get agent status', {
-      sessionId: req.params.sessionId,
-      error: error.message
-    });
-    res.status(500).json({ error: 'Failed to get agent status' });
-  }
-});
-
-/**
- * GET /api/agent/runs/:sessionId
- * Get all agent runs for a session
- */
-router.get('/runs/:sessionId', authenticate, async (req, res) => {
-  try {
-    const { sessionId } = req.params;
-    const limit = parseInt(req.query.limit) || 50;
-    const offset = parseInt(req.query.offset) || 0;
-
-    const runs = db.prepare(`
-      SELECT * FROM agent_runs
-      WHERE session_id = ?
-      ORDER BY created_at DESC
-      LIMIT ? OFFSET ?
-    `).all(sessionId, limit, offset);
-
-    const total = db.prepare(`
-      SELECT COUNT(*) as count FROM agent_runs WHERE session_id = ?
+      WHERE session_id = ? AND role = 'assistant'
+        AND content LIKE '%modified%'
     `).get(sessionId);
 
-    res.json({
-      success: true,
-      runs,
-      pagination: {
-        total: total.count,
-        limit,
-        offset,
-        hasMore: offset + limit < total.count
-      }
+    // Calculate token usage (placeholder - would need actual tracking)
+    const tokenUsage = {
+      input: 0,
+      output: 0,
+      total: 0
+    };
+
+    const status = {
+      phase: latestRun?.phase || 'idle',
+      status: latestRun?.status || 'idle',
+      startedAt: latestRun?.created_at || null,
+      progress: latestRun?.progress || 0,
+      filesModified: filesModified?.count || 0,
+      tokenUsage
+    };
+
+    logger.info('API', {
+      method: 'GET',
+      path: `/api/agent/status/${sessionId}`,
+      status: 200
     });
-  } catch (error) {
-    logger.error('Failed to get agent runs', {
-      sessionId: req.params.sessionId,
-      error: error.message
+
+    res.json(status);
+
+  } catch (err) {
+    logger.error('API_ERROR', {
+      method: 'GET',
+      path: `/api/agent/status/${req.params.sessionId}`,
+      error: err.message,
+      stack: err.stack
     });
-    res.status(500).json({ error: 'Failed to get agent runs' });
+
+    res.status(500).json({
+      error: 'Failed to get status',
+      code: 'STATUS_FETCH_ERROR'
+    });
   }
 });
 
 /**
- * GET /api/agent/runs/:sessionId/:runId
- * Get detailed information about a specific agent run
+ * GET /api/runtime
+ * Get runtime information (sandbox, tunnels, processes)
  */
-router.get('/runs/:sessionId/:runId', authenticate, async (req, res) => {
+router.get('/runtime', async (req, res) => {
   try {
-    const { sessionId, runId } = req.params;
-
-    const run = db.prepare(`
-      SELECT * FROM agent_runs
-      WHERE id = ? AND session_id = ?
-    `).get(runId, sessionId);
-
-    if (!run) {
-      return res.status(404).json({ error: 'Agent run not found' });
-    }
-
-    res.json({
-      success: true,
-      run
+    logger.info('API', {
+      method: 'GET',
+      path: '/api/runtime'
     });
-  } catch (error) {
-    logger.error('Failed to get agent run', {
-      runId: req.params.runId,
-      error: error.message
+
+    // Calculate uptime
+    const uptime = process.uptime();
+
+    // Get memory usage
+    const memUsage = process.memoryUsage();
+    const totalMem = require('os').totalmem();
+    const usedMem = memUsage.heapUsed;
+
+    // Get CPU usage (simple approximation)
+    const cpuUsage = process.cpuUsage();
+    const cpuPercent = ((cpuUsage.user + cpuUsage.system) / 1000000 / uptime) * 100;
+
+    // TODO: Get actual tunnel and process info from runtime tracking
+    const tunnels = [];
+    const processes = [];
+
+    const runtime = {
+      uptime: Math.floor(uptime),
+      cpu: Math.min(cpuPercent, 100).toFixed(1),
+      memory: {
+        used: (usedMem / 1024 / 1024 / 1024).toFixed(2),
+        total: (totalMem / 1024 / 1024 / 1024).toFixed(2)
+      },
+      workspace: 0, // TODO: Calculate workspace size
+      tunnels,
+      processes,
+      telegramBot: !!process.env.TELEGRAM_BOT_TOKEN,
+      phoneBridge: !!process.env.PHONE_BRIDGE_ENABLED
+    };
+
+    logger.info('API', {
+      method: 'GET',
+      path: '/api/runtime',
+      status: 200
     });
-    res.status(500).json({ error: 'Failed to get agent run' });
+
+    res.json(runtime);
+
+  } catch (err) {
+    logger.error('API_ERROR', {
+      method: 'GET',
+      path: '/api/runtime',
+      error: err.message,
+      stack: err.stack
+    });
+
+    res.status(500).json({
+      error: 'Failed to get runtime info',
+      code: 'RUNTIME_FETCH_ERROR'
+    });
   }
 });
 
 /**
- * POST /api/agent/cli-task
- * CLI-friendly task submission (no auth required for localhost)
- * Used by max-cli.js for direct task execution
+ * GET /health (moved to index.js for /api/health)
+ * This endpoint is now available at both /api/health and /api/agent/health
  */
-router.post('/cli-task', async (req, res) => {
+router.get('/health', async (req, res) => {
   try {
-    const { task, userId = 'cli_user' } = req.body;
+    const db = getDatabase();
 
-    if (!task) {
-      return res.status(400).json({ error: 'Task is required' });
-    }
+    // Check database
+    const dbOk = !!db.prepare('SELECT 1').get();
 
-    // Get or create session atomically - FIXED: Use getOrCreateSession
-    const sessionId = getOrCreateSession(String(userId), 'cli');
+    // Check Groq
+    const groqOk = !!process.env.GROQ_API_KEY;
 
-    logger.info('CLI task submitted', {
-      sessionId,
-      userId,
-      task: task.substring(0, 100)
+    // Check Telegram
+    const telegramOk = !!process.env.TELEGRAM_BOT_TOKEN;
+
+    const health = {
+      status: 'ok',
+      uptime: Math.floor(process.uptime()),
+      timestamp: new Date().toISOString(),
+      telegram: telegramOk,
+      db: dbOk,
+      groq: groqOk
+    };
+
+    res.json(health);
+
+  } catch (err) {
+    logger.error('HEALTH_CHECK_ERROR', {
+      error: err.message
     });
 
-    // Execute agent loop asynchronously
-    setImmediate(() => {
-      executeAgentLoop(task, sessionId, null, userId).catch(err => {
-        logger.error('CLI agent execution failed', {
-          sessionId,
-          error: err.message
-        });
-      });
+    res.status(500).json({
+      status: 'error',
+      error: err.message
     });
-
-    res.json({
-      success: true,
-      message: 'Task started. Use max-cli subscribe to watch progress.',
-      sessionId,
-      taskId: sessionId
-    });
-
-  } catch (error) {
-    logger.error('Failed to submit CLI task', { error: error.message });
-    res.status(500).json({ error: 'Failed to submit CLI task' });
   }
 });
 

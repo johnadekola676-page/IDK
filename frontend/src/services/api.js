@@ -31,6 +31,11 @@ export const createSession = async (userId) => {
   return response.data;
 };
 
+export const archiveSession = async (sessionId) => {
+  const response = await api.post(`/sessions/${sessionId}/archive`);
+  return response.data;
+};
+
 export const deleteSession = async (sessionId) => {
   const response = await api.delete(`/sessions/${sessionId}`);
   return response.data;
@@ -38,7 +43,7 @@ export const deleteSession = async (sessionId) => {
 
 // Messages
 export const getMessages = async (sessionId, limit = 100, offset = 0) => {
-  const response = await api.get(`/messages/${sessionId}`, { params: { limit, offset } });
+  const response = await api.get(`/sessions/${sessionId}/messages`, { params: { limit, offset } });
   return response.data;
 };
 
@@ -47,19 +52,56 @@ export const sendMessage = async (sessionId, content, role = 'user') => {
   return response.data;
 };
 
+// Configuration
+export const getConfig = async () => {
+  const response = await api.get('/config');
+  return response.data;
+};
+
+export const updateConfig = async (updates) => {
+  const response = await api.post('/config', updates);
+  return response.data;
+};
+
+export const getAvailableModels = async () => {
+  const response = await api.get('/config/models');
+  return response.data;
+};
+
+export const updateRepo = async (repoUrl, branch = 'main') => {
+  const response = await api.post('/config/repo', { repoUrl, branch });
+  return response.data;
+};
+
+export const updateModel = async (provider, model) => {
+  const response = await api.post('/config/model', { provider, model });
+  return response.data;
+};
+
 // Agent
-export const triggerAgentTask = async (sessionId, task, userId) => {
+export const executeTask = async (sessionId, task, userId) => {
   const response = await api.post('/agent/task', { sessionId, task, userId });
   return response.data;
 };
 
-export const getAgentStatus = async (sessionId) => {
+export const getTaskStatus = async (sessionId) => {
   const response = await api.get(`/agent/status/${sessionId}`);
   return response.data;
 };
 
 export const getAgentRuns = async (sessionId, limit = 50, offset = 0) => {
   const response = await api.get(`/agent/runs/${sessionId}`, { params: { limit, offset } });
+  return response.data;
+};
+
+// Runtime
+export const getRuntimeInfo = async () => {
+  const response = await api.get('/runtime');
+  return response.data;
+};
+
+export const getHealth = async () => {
+  const response = await api.get('/health');
   return response.data;
 };
 
@@ -84,8 +126,10 @@ export const writeFileContent = async (path, content) => {
   return response.data;
 };
 
-// Alias for compatibility with FileExplorer component
+// Alias for compatibility
 export const updateFileContent = writeFileContent;
+export const triggerAgentTask = executeTask;
+export const getAgentStatus = getTaskStatus;
 
 // Provider status (v2.0)
 export const getProviderStatus = async () => {

@@ -6,6 +6,7 @@ import logger from '../utils/logger.js';
 import { runMigrations } from './migrate.js';
 import { runMAXMigration } from './migrate-max.js';
 import { migrateFixMaxTasks } from './migrate-fix-max-tasks.js';
+import { migrateUserPreferences } from './migrate-user-preferences.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -84,6 +85,17 @@ export function initDatabase() {
         error: error.message
       });
       // Don't throw - allow app to continue with new schema
+    }
+
+    // Apply user_preferences migration
+    try {
+      migrateUserPreferences(db);
+      logger.info('user_preferences migration completed');
+    } catch (error) {
+      logger.error('Failed to apply user_preferences migration', {
+        error: error.message
+      });
+      // Don't throw - allow app to continue
     }
 
     logger.info('Database initialized successfully');
