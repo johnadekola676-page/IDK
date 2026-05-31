@@ -318,3 +318,80 @@ export function formatSOPSummary(worksheetPath, results = {}) {
 
   return message;
 }
+
+/**
+ * Format tool use event for Telegram
+ *
+ * @param {string} toolName - Name of the tool
+ * @param {Object} details - Tool execution details
+ * @returns {string} Formatted message
+ */
+export function formatToolUse(toolName, details = {}) {
+  const toolIcons = {
+    read_file: '📖',
+    write_file: '✏️',
+    edit_file: '📝',
+    run_command: '⚙️',
+    list_files: '📁',
+    search_code: '🔍',
+    install_package: '📦',
+    run_tests: '🧪',
+    git_operations: '🔀',
+    create_directory: '📂',
+    web_fetch: '🌐',
+    check_syntax: '✅'
+  };
+
+  const icon = toolIcons[toolName] || '🔧';
+  let message = `${icon} <b>${toolName}</b>`;
+
+  // Add specific details based on tool
+  switch (toolName) {
+    case 'read_file':
+      message += `: Reading <code>${details.path}</code>`;
+      break;
+    case 'write_file':
+      message += `: Writing <code>${details.path}</code>`;
+      break;
+    case 'edit_file':
+      message += `: Editing <code>${details.path}</code>`;
+      break;
+    case 'run_command':
+      const cmd = details.command?.substring(0, 50) || '';
+      message += `: Running <code>${cmd}${details.command?.length > 50 ? '...' : ''}</code>`;
+      break;
+    case 'list_files':
+      message += `: Listing files in <code>${details.path || '.'}</code>`;
+      break;
+    case 'search_code':
+      message += `: Searching for "${details.query}"`;
+      break;
+    case 'install_package':
+      const packages = details.packages?.join(', ') || '';
+      message += `: Installing ${packages}`;
+      break;
+    case 'run_tests':
+      message += `: Running tests`;
+      break;
+    case 'git_operations':
+      message += `: Git ${details.operation || 'operation'}`;
+      break;
+    case 'create_directory':
+      message += `: Creating <code>${details.path}</code>`;
+      break;
+    case 'web_fetch':
+      message += `: Fetching ${details.url}`;
+      break;
+    case 'check_syntax':
+      message += `: Checking <code>${details.path}</code>`;
+      break;
+    default:
+      if (details.path) {
+        message += `: ${details.path}`;
+      } else if (details.command) {
+        message += `: ${details.command.substring(0, 50)}`;
+      }
+  }
+
+  return message;
+}

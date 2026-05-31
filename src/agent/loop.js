@@ -24,6 +24,9 @@ import { executeWithSOP, isSOPEnabled } from './sop-integration.js';
 // V4: Cognitive Reflection System
 import { CognitiveReflectionLoop } from './reflection/cognitive-loop.js';
 
+// V5: REACT Agent Loop (Tool System)
+import { executeReactAgentLoop } from './react-loop.js';
+
 const MAX_RETRY_COUNT = parseInt(process.env.MAX_RETRY_COUNT || '10', 10);
 
 /**
@@ -122,6 +125,22 @@ export async function executeAgentLoop(task, sessionId, progressCallback = null,
       analysis: clarificationCheck.analysis,
       success: false
     };
+  }
+
+  // V5: Try REACT agent loop if enabled
+  if (process.env.ENABLE_REACT_MODE === 'true') {
+    logger.info('REACT mode enabled, using tool-based agent loop');
+    const reactResult = await executeReactAgentLoop(task, sessionId, progressCallback, userId);
+
+    if (reactResult && reactResult.success) {
+      logger.info('REACT execution completed successfully');
+      return reactResult;
+    } else if (reactResult && !reactResult.success) {
+      logger.warn('REACT execution failed, falling back to standard loop', {
+        error: reactResult.error
+      });
+      // Fall through to standard loop
+    }
   }
 
   // V3: Try SOP execution if enabled

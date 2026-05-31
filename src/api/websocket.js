@@ -158,3 +158,80 @@ export function broadcastStatus(sessionId, status) {
     status: status.status
   });
 }
+
+/**
+ * Broadcast tool use event
+ * @param {string} sessionId - Session ID
+ * @param {string} toolName - Name of the tool being used
+ * @param {Object} details - Tool execution details
+ */
+export function broadcastToolUse(sessionId, toolName, details) {
+  if (!global.wsServer) {
+    logger.warn('WebSocket server not initialized');
+    return;
+  }
+
+  const room = `session-${sessionId}`;
+  global.wsServer.to(room).emit('tool', {
+    sessionId,
+    timestamp: new Date().toISOString(),
+    tool: toolName,
+    ...details
+  });
+
+  logger.debug('Tool use broadcasted', {
+    sessionId,
+    room,
+    tool: toolName
+  });
+}
+
+/**
+ * Broadcast terminal output
+ * @param {string} sessionId - Session ID
+ * @param {string} output - Terminal output
+ */
+export function broadcastTerminalOutput(sessionId, output) {
+  if (!global.wsServer) {
+    logger.warn('WebSocket server not initialized');
+    return;
+  }
+
+  const room = `session-${sessionId}`;
+  global.wsServer.to(room).emit('terminal:output', {
+    sessionId,
+    timestamp: new Date().toISOString(),
+    output
+  });
+
+  logger.debug('Terminal output broadcasted', {
+    sessionId,
+    room,
+    length: output.length
+  });
+}
+
+/**
+ * Broadcast terminal command
+ * @param {string} sessionId - Session ID
+ * @param {string} command - Terminal command
+ */
+export function broadcastTerminalCommand(sessionId, command) {
+  if (!global.wsServer) {
+    logger.warn('WebSocket server not initialized');
+    return;
+  }
+
+  const room = `session-${sessionId}`;
+  global.wsServer.to(room).emit('terminal:command', {
+    sessionId,
+    timestamp: new Date().toISOString(),
+    command
+  });
+
+  logger.debug('Terminal command broadcasted', {
+    sessionId,
+    room,
+    command: command.substring(0, 100)
+  });
+}
