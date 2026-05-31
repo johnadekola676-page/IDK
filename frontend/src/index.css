@@ -54,11 +54,13 @@ body {
   margin: 0;
   padding: 0;
   overflow-x: hidden;
+  /* Width rules handled in App.css - avoid duplication */
 }
 
 #root {
   min-height: 100vh;
   background: var(--bg);
+  /* Width rules handled in App.css - avoid duplication */
 }
 
 /* Custom scrollbar */
